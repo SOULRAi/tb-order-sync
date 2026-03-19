@@ -1,7 +1,7 @@
 {
   "name": "tb-order-sync",
-  "version": "0.3.0",
-  "description": "Multi-sheet order sync and refund workflow service with a tb CLI launcher",
+  "version": "0.3.1",
+  "description": "Tencent Docs and Feishu order-sheet sync service with refund workflow, daemon scheduler, and tb CLI",
   "bin": {
     "tb": "bin/tb.js"
   },
@@ -17,6 +17,7 @@
     "requirements.txt",
     "README.md",
     "CHANGELOG.md",
+    "LICENSE",
     ".env.example",
     "build.py",
     "sync_service.spec",
@@ -28,13 +29,25 @@
     "check": "node bin/tb.js check",
     "pack:local": "npm pack"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SOULRAi/tb-order-sync.git"
+  },
+  "homepage": "https://github.com/SOULRAi/tb-order-sync#readme",
+  "bugs": {
+    "url": "https://github.com/SOULRAi/tb-order-sync/issues"
+  },
   "keywords": [
-    "python",
-    "scheduler",
+    "order-sync",
+    "refund-workflow",
+    "gross-profit",
     "daemon",
+    "scheduler",
     "rich-cli",
     "tencent-docs",
-    "feishu"
+    "feishu",
+    "spreadsheet-sync",
+    "automation"
   ],
   "license": "MIT"
 }

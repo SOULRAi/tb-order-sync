@@ -1,5 +1,9 @@
 # TB Order Sync
 
+[![npm version](https://img.shields.io/npm/v/tb-order-sync)](https://www.npmjs.com/package/tb-order-sync)
+[![GitHub Repo](https://img.shields.io/badge/GitHub-SOULRAi%2Ftb--order--sync-181717?logo=github)](https://github.com/SOULRAi/tb-order-sync)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SOULRAi/tb-order-sync/blob/main/LICENSE)
+
 **多表格同步与退款标记服务** — 自动同步腾讯文档 / 飞书多表格数据，计算毛利并标记退款订单。
 
 > 一键启动、零配置门槛、支持 Windows / macOS 双平台，可打包为独立 exe 免安装分发。
@@ -46,7 +50,7 @@ tb daemon status
 
 ```bash
 npm pack
-npm install -g ./tb-order-sync-0.3.0.tgz
+npm install -g ./tb-order-sync-0.3.1.tgz
 ```
 
 ### 方式一：一键启动（推荐）

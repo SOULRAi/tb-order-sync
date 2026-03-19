@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-03-19
+
+### Added
+
+- Added README badges for npm, GitHub, and license visibility.
+- Added npm metadata fields for repository, homepage, and issue tracking.
+
+### Changed
+
+- Improved npm package description and keywords to better reflect order sync, refund workflow, and spreadsheet automation.
+- Prepared GitHub release metadata for the public `tb-order-sync` repository.
+
 ## [0.3.0] - 2026-03-19
 
 ### Added
