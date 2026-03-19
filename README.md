@@ -4,130 +4,99 @@
 [![GitHub Repo](https://img.shields.io/badge/GitHub-SOULRAi%2Ftb--order--sync-181717?logo=github)](https://github.com/SOULRAi/tb-order-sync)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/SOULRAi/tb-order-sync/blob/main/LICENSE)
 
-**多表格同步与退款标记服务** — 自动同步腾讯文档 / 飞书多表格数据，计算毛利并标记退款订单。
+**多表格同步与退款标记服务**  
+面向订单运营场景的轻量自动化服务，负责同步云表格、计算毛利、标记退款状态，并支持后台守护运行。
 
-> 一键启动、零配置门槛、支持 Windows / macOS 双平台，可打包为独立 exe 免安装分发。
+> 支持 `tb` 短命令、Rich 控制台、守护进程、Windows / macOS 一键启动，以及后续接入飞书 C 表的扩展路径。
 
----
+**快速导航**
 
-## 功能概览
+- [🚀 快速开始](#quick-start)
+- [✨ 核心能力](#capabilities)
+- [🔐 API 获取指引](#api-guide)
+- [🧠 业务规则](#business-rules)
+- [🧩 架构设计](#architecture)
+- [🛡️ 守护进程](#daemon)
+- [⚙️ 配置说明](#configuration)
+- [🧪 测试](#testing)
 
-| 功能 | 说明 | 状态 |
+<a id="capabilities"></a>
+## ✨ 核心能力
+
+| 能力 | 说明 | 状态 |
 |------|------|------|
-| 毛利自动计算 | 读取 A 表字段，计算 `毛利 = 客户报价 - 运费 - 包装价格 - 产品价格`，异常数据标记 | ✅ 已实现 |
-| 退款自动匹配 | B 表退款单号匹配 A 表订单，写入退款状态 + 可选整行标红 | ✅ 已实现 |
-| 增量同步 | 基于行指纹 (MD5) 的变更检测，只处理变化行 | ✅ 已实现 |
-| 全量同步 | 忽略缓存，全表重新计算 | ✅ 已实现 |
-| 定时调度 | APScheduler 定时执行，支持 jitter 防冲突 | ✅ 已实现 |
-| 交互式配置向导 | `setup` 命令一站式引导配置所有参数，并可直接打开官方文档链接 | ✅ 已实现 |
-| Rich 控制台 | 无参启动即进入可视化 CLI 控制台 | ✅ 已实现 |
-| 进程守护 | 支持后台启动 / 停止 / 状态 / 日志查看 | ✅ 已实现 |
-| 一键启动脚本 | 双击即用，自动初始化环境，无需手动装 Python | ✅ 已实现 |
-| 打包为 exe | PyInstaller 打包，免安装分发 | ✅ 已实现 |
-| dry-run 模式 | 模拟执行不写入，安全验证 | ✅ 已实现 |
-| 飞书 C 表同步 | C 表 → A 表数据同步 | 🔲 骨架已预留 |
+| 💰 毛利自动计算 | 读取 A 表字段，按固定业务公式回写毛利列 | ✅ 已实现 |
+| 🔁 退款自动匹配 | B 表退款单号匹配 A 表订单，写入退款状态列 | ✅ 已实现 |
+| 🧾 数据异常标记 | 非法数字直接写入 `数据异常`，并记录日志 | ✅ 已实现 |
+| ⚡ 增量同步 | 基于行指纹和退款集合 hash，仅处理变化数据 | ✅ 已实现 |
+| 🧨 全量重建 | 支持忽略缓存，对全表重新扫描和回写 | ✅ 已实现 |
+| 🖥️ Rich 控制台 | 无参启动即进入交互式控制台首页 | ✅ 已实现 |
+| 🛡️ 守护进程 | 支持后台启动、停止、状态检查、日志查看 | ✅ 已实现 |
+| 📦 一键分发 | 支持双击脚本、npm launcher、PyInstaller 打包 | ✅ 已实现 |
+| 🐦 飞书预留接口 | C 表同步抽象层和 connector skeleton 已预留 | 🔲 骨架已预留 |
 
-## 快速开始
+<a id="quick-start"></a>
+## 🚀 快速开始
 
-### 方式零：安装 `tb` 命令
+### 推荐命令
 
 ```bash
-# 在项目根目录执行一次
-npm link
+npm install -g tb-order-sync
 
-# 之后直接使用
 tb
-tb menu
 tb setup
+tb all --dry-run
 tb all
-tb gp
-tb rm
 tb daemon start
 tb daemon status
 ```
 
-如果你要生成可分发的 npm 包：
+### 启动方式
+
+| 方式 | 适用场景 | 入口 |
+|------|----------|------|
+| `tb` 命令 | 开发、运维、长期使用 | `tb` / `tb setup` / `tb all` |
+| 双击启动 | 非技术用户 | `启动.bat` / `启动.command` |
+| Python 兼容入口 | 调试或源码环境 | `python main.py` |
+| 打包分发 | 免安装交付 | `dist/sync_service/` |
+
+### 常用命令速查
 
 ```bash
-npm pack
-npm install -g ./tb-order-sync-0.3.1.tgz
-```
-
-### 方式一：一键启动（推荐）
-
-**无需任何技术背景，双击即用。**
-
-| 平台 | 操作 |
-|------|------|
-| **Windows** | 双击 `启动.bat` |
-| **macOS** | 双击 `启动.command` |
-
-首次运行会自动完成：
-1. 检测 / 下载 Python 环境（如果没有）
-2. 安装依赖
-3. 进入 Rich 控制台
-4. 在控制台中继续配置、执行任务、管理守护进程
-
-```bash
-tb
-# 或直接双击启动脚本
-# 默认进入 Rich 交互式控制台
-```
-
-### 方式二：命令行
-
-```bash
-# 推荐入口
+# 控制台
 tb
 tb menu
 
-# 交互式配置
+# 配置
 tb setup
-tb config
-
-# 验证配置
 tb check
-tb setup --check
 
-# 执行任务
+# 执行
 tb all
 tb gp
 tb rm
 tb all --dry-run
 tb all --mode full
-tb gp --mode full
 
-# 定时调度
+# 调度 / 守护
 tb start
-tb schedule
-
-# 后台守护
 tb daemon start
 tb daemon status
 tb daemon logs --lines 80
 tb daemon stop
-tb daemon restart
-
-# 兼容旧写法
-python main.py
-python main.py run all
-python main.py run gross-profit
-python main.py run refund-match
 ```
 
-### 方式三：打包为 exe 分发
+### 双击启动
 
-```bash
-# 构建（在目标平台上执行）
-pip install pyinstaller
-python build.py --clean
+| 平台 | 文件 |
+|------|------|
+| Windows | `启动.bat` |
+| macOS | `启动.command` |
 
-# 产物在 dist/sync_service/ 目录
-# 连同 启动.bat（Windows）或 启动.command（macOS）一起分发
-# 用户无需安装 Python
-```
+首次运行会自动补齐 Python 运行环境并进入 Rich 控制台。
 
-## API 获取指引
+<a id="api-guide"></a>
+## 🔐 API 获取指引
 
 ### 腾讯文档 API
 
@@ -157,7 +126,8 @@ python build.py --clean
   - 本项目里的飞书 connector 目前还是 skeleton
   - 现阶段向导里先采集配置，为后续 C 表接入做准备
 
-## 业务规则
+<a id="business-rules"></a>
+## 🧠 业务规则
 
 ### A 表结构（订单表）
 
@@ -195,7 +165,7 @@ python build.py --clean
 - 不存在 → 清空 I 列（同步取消）
 - 可选：`ENABLE_STYLE_UPDATE=true` 时额外设置行背景色标红
 
-## 项目结构
+## 🗂️ 项目结构
 
 ```
 tb-order-sync/
@@ -255,7 +225,8 @@ tb-order-sync/
     └── test_refund_match_service.py  # 6 tests
 ```
 
-## 架构设计
+<a id="architecture"></a>
+## 🧩 架构设计
 
 ```
 ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
@@ -280,14 +251,15 @@ tb-order-sync/
 - **配置化** — 列映射、业务文案、运行模式全部可通过 `.env` 配置
 - **可扩展** — 新增 D 表、E 表时无需重构主程序
 
-## 增量策略
+## 🔄 增量策略
 
 | 目标 | 策略 | 存储 |
 |------|------|------|
 | A 表毛利 | 对每行关键字段 (C/D/E/F/H) 生成 MD5 指纹，仅处理指纹变化行 | `state/sync_state.json` |
 | B 表退款 | 对退款单号集合生成整体 hash，集合不变则跳过 | `state/sync_state.json` |
 
-## 守护进程
+<a id="daemon"></a>
+## 🛡️ 守护进程
 
 - `tb daemon start`
   - 在后台启动定时调度进程
@@ -304,7 +276,8 @@ tb-order-sync/
 后台控制台输出默认写入：
 - `state/scheduler.console.log`
 
-## 配置说明
+<a id="configuration"></a>
+## ⚙️ 配置说明
 
 运行 `tb setup` 可交互式完成所有配置。也可手动编辑 `.env`：
 
@@ -338,7 +311,8 @@ B_COL_ORDER_NO=A
 
 完整配置项见 [.env.example](.env.example)。
 
-## 测试
+<a id="testing"></a>
+## 🧪 测试
 
 ```bash
 # 运行全部测试（35 tests）
@@ -350,7 +324,7 @@ pytest tests/test_gross_profit_service.py -v
 pytest tests/test_refund_match_service.py -v
 ```
 
-## 技术栈
+## 🧱 技术栈
 
 | 组件 | 用途 |
 |------|------|
@@ -364,7 +338,7 @@ pytest tests/test_refund_match_service.py -v
 | PyInstaller | 打包为可执行文件 |
 | pytest | 单元测试 |
 
-## 部署方式对比
+## 📦 部署方式对比
 
 | 方式 | 需要 Python | 适用场景 |
 |------|------------|---------|
@@ -372,7 +346,7 @@ pytest tests/test_refund_match_service.py -v
 | 打包 exe 分发 | 不需要 | 给非技术用户 |
 | 命令行直接运行 | 需要 | 开发者 |
 
-## Roadmap
+## 🗺️ Roadmap
 
 - [x] 毛利自动计算
 - [x] 退款自动匹配
@@ -385,12 +359,12 @@ pytest tests/test_refund_match_service.py -v
 - [ ] 腾讯文档 OAuth2 token 自动刷新
 - [ ] 腾讯文档行样式 API 验证
 
-## 已知待确认项
+## ⚠️ 已知待确认项
 
 - 腾讯文档 Open API 的实际 endpoint 和 request/response 格式（代码中标注 `TODO / NEED_VERIFY`）
 - 腾讯文档是否支持通过 API 设置单元格样式
 - OAuth2 token 自动刷新流程
 
-## License
+## 📄 License
 
 MIT
