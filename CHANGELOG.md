@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.2] - 2026-03-19
+
+### Added
+
+- Added npm global-install bootstrap via `postinstall`, so `npm install -g tb-order-sync` can prepare the CLI runtime in one step on macOS.
+- Added dedicated runtime path handling for npm installs, using a writable user app-home instead of the npm package directory.
+- Added tests for `TB_HOME` path resolution and relative `state_dir` normalization.
+- Added `pytest.ini` to keep local release artifacts from polluting test discovery.
+
+### Changed
+
+- Changed the Node launcher to store `.env`, `state`, and `.venv` under the app home during npm-based CLI usage.
+- Changed documentation to describe the one-command npm install flow and the macOS runtime directory.
+
 ## [0.4.1] - 2026-03-19
 
 ### Added

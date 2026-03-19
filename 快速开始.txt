@@ -1,31 +1,38 @@
 TB Order Sync 快速开始
 
-1. 双击启动
+1. 一条命令安装 CLI（macOS / 已安装 Node.js）
+- npm install -g tb-order-sync
+- 安装完成后直接运行 `tb`
+- 运行环境会放到 `~/Library/Application Support/tb-order-sync/`
+
+2. 双击启动
 - Windows: 启动.bat
 - macOS: 启动.command
 
-2. 首次运行
+3. 首次运行
 - 如果本机还没配置，程序会自动进入 setup 配置向导
 - 配好腾讯文档信息后，建议先执行一次 `tb check`
 
-3. 常用命令
+4. 常用命令
 - tb all              执行毛利计算 + 退款匹配
 - tb all --dry-run    仅演练，不写回
 - tb daemon start     后台持续运行
 - tb daemon status    查看后台状态
 - tb daemon logs      查看后台日志
 
-4. 登录自启
+5. 登录自启
 - tb daemon autostart-enable
 - tb daemon autostart-status
 - tb daemon autostart-disable
 
-5. 日志与状态文件
-- state/scheduler.console.log
-- state/last_run.json
-- state/sync_state.json
+6. 日志与状态文件
+- npm 安装方式：~/Library/Application Support/tb-order-sync/state/
+- 常见文件：
+  - scheduler.console.log
+  - last_run.json
+  - sync_state.json
 
-6. 常见问题
+7. 常见问题
 - 缺配置：运行 tb setup
 - 想做启动自检：运行 tb check
 - 接口限流：稍等后重试，不要连续高频重复执行

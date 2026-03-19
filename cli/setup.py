@@ -28,7 +28,7 @@ except ImportError:
 
 from dotenv import dotenv_values
 
-from config.settings import PROJECT_ROOT
+from config.settings import APP_HOME, PACKAGE_ROOT
 
 # ── UI 文案 ────────────────────────────────────────────────────────────────
 BANNER_TITLE = "多表格同步服务 — 配置向导"
@@ -43,8 +43,8 @@ STEP_SUMMARY = "配置总览"
 STEP_WRITE = "写入配置"
 STEP_TEST = "连接测试"
 
-ENV_PATH = PROJECT_ROOT / ".env"
-ENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
+ENV_PATH = APP_HOME / ".env"
+ENV_EXAMPLE_PATH = PACKAGE_ROOT / ".env.example"
 
 # Column letter validator
 _COL_RE = re.compile(r"^[A-Z]{1,3}$")
@@ -551,7 +551,9 @@ class SetupWizard:
         self.console.print(f"\n[bold cyan]🔌 {STEP_TEST}[/bold cyan]")
         self.console.print("  正在执行启动自检：状态目录 + 腾讯文档 A/B 表读取...\n")
 
-        state_dir = Path(self.values.get("STATE_DIR", "state"))
+        state_dir = Path(self.values.get("STATE_DIR", "state")).expanduser()
+        if not state_dir.is_absolute():
+            state_dir = APP_HOME / state_dir
         try:
             state_dir.mkdir(parents=True, exist_ok=True)
             probe = state_dir / ".write_test"

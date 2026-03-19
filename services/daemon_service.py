@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config.settings import PROJECT_ROOT, Settings
+from config.settings import APP_HOME, PACKAGE_ROOT, Settings
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -131,10 +131,14 @@ class DaemonService:
         log_handle = self._log_path.open("ab")
         try:
             spawn_kwargs: dict[str, Any] = {
-                "cwd": str(PROJECT_ROOT),
+                "cwd": str(PACKAGE_ROOT),
                 "stdin": subprocess.DEVNULL,
                 "stdout": log_handle,
                 "stderr": log_handle,
+                "env": {
+                    **os.environ,
+                    "TB_HOME": str(APP_HOME),
+                },
             }
 
             if os.name == "nt":
@@ -332,7 +336,7 @@ class DaemonService:
     def _build_spawn_command(self) -> list[str]:
         if getattr(sys, "frozen", False):
             return [str(Path(sys.executable).resolve()), "schedule"]
-        return [sys.executable, str(PROJECT_ROOT / "main.py"), "schedule"]
+        return [sys.executable, str(PACKAGE_ROOT / "main.py"), "schedule"]
 
     def _autostart_command_line(self) -> str:
         return subprocess.list2cmdline(self._build_spawn_command())
@@ -355,7 +359,11 @@ class DaemonService:
             "  <array>\n"
             f"{args}\n"
             "  </array>\n"
-            f"  <key>WorkingDirectory</key>\n  <string>{PROJECT_ROOT}</string>\n"
+            "  <key>EnvironmentVariables</key>\n"
+            "  <dict>\n"
+            f"    <key>TB_HOME</key>\n    <string>{APP_HOME}</string>\n"
+            "  </dict>\n"
+            f"  <key>WorkingDirectory</key>\n  <string>{PACKAGE_ROOT}</string>\n"
             "  <key>RunAtLoad</key>\n  <true/>\n"
             "  <key>KeepAlive</key>\n  <false/>\n"
             f"  <key>StandardOutPath</key>\n  <string>{self._log_path}</string>\n"

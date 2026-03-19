@@ -54,6 +54,15 @@ tb daemon start
 tb daemon status
 ```
 
+在 macOS 上，`npm install -g tb-order-sync` 会同时完成两件事：
+- 安装全局 `tb` 命令
+- 自动把 CLI 运行环境部署到 `~/Library/Application Support/tb-order-sync/`
+
+运行时目录说明：
+- 配置文件：`~/Library/Application Support/tb-order-sync/.env`
+- 状态目录：`~/Library/Application Support/tb-order-sync/state/`
+- Python 运行环境：`~/Library/Application Support/tb-order-sync/.venv/`
+
 首次运行说明：
 - 如果本机还没有完整配置，直接执行 `tb` 会自动进入 `setup`
 - `tb check` 会执行启动自检，确认状态目录、A 表、B 表是否可用
@@ -69,7 +78,7 @@ tb daemon status
 
 GitHub Release 现已提供标准完整分发包：
 - Windows: `tb-order-sync-windows-x64-<version>.zip`
-- macOS: `tb-order-sync-macos-x64-<version>.zip`
+- macOS: `tb-order-sync-macos-bootstrap-<version>.zip`
 
 ### 常用命令速查
 
@@ -196,7 +205,9 @@ tb-order-sync/
 ├── 启动.bat                       # Windows 一键启动
 ├── 启动.command                   # macOS 一键启动
 ├── bin/
-│   └── tb.js                      # npm / node 统一入口
+│   ├── tb.js                      # npm / node 统一入口
+│   ├── runtime.js                 # npm 运行时 bootstrap
+│   └── postinstall.js             # npm 全局安装自动部署
 │
 ├── config/
 │   ├── settings.py                # Pydantic Settings 全局配置
