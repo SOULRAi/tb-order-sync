@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.4] - 2026-03-20
+
+### 修复
+
+- 修复 `tb setup` 在 Windows 环境下输入不稳定的问题：配置向导现统一使用原生 `input()` 读取，避免官网链接打开后无法继续输入、无法输入字母数字、无法粘贴的问题。
+- 修复 `tb setup` 的官网链接打开交互体验：保持数字菜单方式，支持跳过、打开全部、打开单个链接，并增强 Windows 下的浏览器启动回退逻辑。
+- 修复 Windows 双击 `启动.bat` 可能直接闪退的问题：补上缺失的 `:menu` 标签，并修正 Python / EXE 命令拼接与失败停留逻辑。
+
 ## [0.4.3] - 2026-03-20
 
 ### 新增
