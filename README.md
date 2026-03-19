@@ -1,4 +1,4 @@
-# TtoFexecl
+# TB Order Sync
 
 **多表格同步与退款标记服务** — 自动同步腾讯文档 / 飞书多表格数据，计算毛利并标记退款订单。
 
@@ -46,7 +46,7 @@ tb daemon status
 
 ```bash
 npm pack
-npm install -g ./tb-sync-service-0.3.0.tgz
+npm install -g ./tb-order-sync-0.3.0.tgz
 ```
 
 ### 方式一：一键启动（推荐）
@@ -194,7 +194,7 @@ python build.py --clean
 ## 项目结构
 
 ```
-TtoFexecl/
+tb-order-sync/
 ├── main.py                        # 入口
 ├── build.py                       # PyInstaller 构建脚本
 ├── sync_service.spec              # PyInstaller spec 文件

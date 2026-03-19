@@ -1,7 +1,7 @@
 {
-  "name": "tb-sync-service",
+  "name": "tb-order-sync",
   "version": "0.3.0",
-  "description": "Launcher package for the multi-sheet sync and refund marking service",
+  "description": "Multi-sheet order sync and refund workflow service with a tb CLI launcher",
   "bin": {
     "tb": "bin/tb.js"
   },

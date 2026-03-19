@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Renamed the distribution package to `tb-order-sync` to match the order-sync use case and the `tb` launcher.
 - Changed no-argument startup to open the Rich dashboard by default.
 - Changed macOS and Windows launcher scripts to delegate to the unified in-app dashboard.
 - Changed README to document dashboard usage, daemon commands, API onboarding, and npm packaging.
