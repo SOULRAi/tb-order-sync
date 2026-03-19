@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - 修复 `tb setup` 中官网链接打开交互不明确的问题：现已改为数字菜单，支持打开全部、打开单个链接或暂时跳过。
 - 修复配置向导中凭证输入不可直接粘贴的问题：`Client ID` / `Open ID` / `Access Token` 等输入现改为可见输入，支持直接粘贴。
 - 修复配置向导中无法暂时跳过某一项的问题：现可输入 `/skip` 暂时跳过，后续再补充配置。
+- 修复 Windows 双击 `启动.bat` 可能直接闪退的问题：补上缺失的 `:menu` 标签，并修正 Python / EXE 启动命令拼接方式。
 
 ## [0.4.2] - 2026-03-19
 

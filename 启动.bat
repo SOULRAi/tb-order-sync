@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul 2>&1
 title 多表格同步服务
 cd /d "%~dp0"
@@ -12,12 +13,14 @@ echo.
 :: ── 优先级1：已有打包好的 exe ────────────────────────
 if exist "sync_service.exe" (
     set "CMD=sync_service.exe"
+    set "CMD_ARGS="
     goto :menu
 )
 
 :: ── 优先级2：已有虚拟环境 ───────────────────────────
 if exist ".venv\Scripts\python.exe" (
-    set "CMD=.venv\Scripts\python main.py"
+    set "CMD=.venv\Scripts\python.exe"
+    set "CMD_ARGS=main.py"
     goto :menu
 )
 
@@ -89,7 +92,8 @@ echo  [*] 使用嵌入式 Python 安装依赖...
 echo.
 python_embed\python.exe -m pip install -q -r requirements.txt --target=".deps" 2>nul
 set "PYTHONPATH=%~dp0.deps;%~dp0"
-set "CMD=python_embed\python.exe main.py"
+set "CMD=python_embed\python.exe"
+set "CMD_ARGS=main.py"
 goto :menu
 
 :venv_setup
@@ -111,15 +115,30 @@ if errorlevel 1 (
 
 echo  [3/3] 环境初始化完成!
 echo.
-set "CMD=.venv\Scripts\python main.py"
+set "CMD=.venv\Scripts\python.exe"
+set "CMD_ARGS=main.py"
 
 :: ── 启动 Rich 控制台 / 执行指定命令 ────────────────
+:menu
+if not defined CMD (
+    echo  [!] 启动命令未初始化成功
+    echo.
+    pause
+    exit /b 1
+)
+
 if "%~1"=="" (
-    %CMD%
+    call "%CMD%" %CMD_ARGS%
     echo.
     pause
     exit /b 0
 )
 
-%CMD% %*
-exit /b %errorlevel%
+call "%CMD%" %CMD_ARGS% %*
+set "EXIT_CODE=%errorlevel%"
+if not "%EXIT_CODE%"=="0" (
+    echo.
+    echo  [!] 程序退出，返回码: %EXIT_CODE%
+    pause
+)
+exit /b %EXIT_CODE%
