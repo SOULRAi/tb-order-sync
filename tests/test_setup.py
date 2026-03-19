@@ -1,0 +1,21 @@
+from cli.setup import parse_tencent_sheet_reference
+
+
+def test_parse_tencent_sheet_reference_from_full_url():
+    file_id, sheet_id = parse_tencent_sheet_reference(
+        "https://docs.qq.com/sheet/DWmlsQUVEcWlyTHlE?tab=000001"
+    )
+    assert file_id == "DWmlsQUVEcWlyTHlE"
+    assert sheet_id == "000001"
+
+
+def test_parse_tencent_sheet_reference_from_raw_file_id():
+    file_id, sheet_id = parse_tencent_sheet_reference("DWnV5Q1dqQ0VrcVBn")
+    assert file_id == "DWnV5Q1dqQ0VrcVBn"
+    assert sheet_id == ""
+
+
+def test_parse_tencent_sheet_reference_invalid_url():
+    file_id, sheet_id = parse_tencent_sheet_reference("https://docs.qq.com/")
+    assert file_id == ""
+    assert sheet_id == ""

@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from config.settings import Settings, SyncMode, get_settings
 from connectors.base import BaseSheetConnector
+from models.task_models import RunSummary
 from services.gross_profit_service import GrossProfitService
 from services.refund_match_service import RefundMatchService
 from services.state_service import StateService
@@ -39,8 +40,32 @@ class SchedulerService:
     def _run_all(self) -> None:
         """Execute all tasks in sequence."""
         logger.info("--- Scheduled run: all tasks ---")
-        self._gp_svc.run()
-        self._rm_svc.run()
+        gp_result = self._gp_svc.run()
+        rm_result = self._rm_svc.run()
+        try:
+            self._state_svc.save_last_run(self._build_summary([gp_result, rm_result], trigger="scheduled"))
+        except Exception as exc:
+            logger.warning("Failed to save scheduled run summary: %s", exc)
+
+    @staticmethod
+    def _build_summary(results, *, trigger: str) -> RunSummary:
+        finished_values = [item.finished_at for item in results if item.finished_at is not None]
+        success = all(item.success for item in results)
+        message = None
+        if not success:
+            errors = [f"{item.task_name.value}: {item.error_message}" for item in results if item.error_message]
+            message = " | ".join(errors) if errors else "存在任务失败，请检查后台日志。"
+        return RunSummary(
+            trigger=trigger,
+            success=success,
+            finished_at=max(finished_values) if finished_values else None,
+            task_count=len(results),
+            rows_read=sum(item.rows_read for item in results),
+            rows_changed=sum(item.rows_changed for item in results),
+            rows_error=sum(item.rows_error for item in results),
+            tasks=results,
+            message=message,
+        )
 
     def start(self) -> None:
         """Start the blocking scheduler with configured interval and jitter."""

@@ -145,7 +145,10 @@ class GrossProfitService:
             e = parse_number(rec.freight)
             f = parse_number(rec.customer_quote)
 
-            if any(v is None for v in (c, d, e, f)):
+            if self._all_cost_fields_blank(rec):
+                # Treat rows with empty C/D/E as unused rows and keep G blank.
+                new_val = ""
+            elif any(v is None for v in (c, d, e, f)):
                 # Data error
                 new_val = self._settings.data_error_text
                 errors += 1
@@ -200,3 +203,14 @@ class GrossProfitService:
     def _safe_get_str(row: list[Any], idx: int) -> Optional[str]:
         val = row[idx] if idx < len(row) else None
         return str(val) if val is not None else None
+
+    @staticmethod
+    def _is_blank(value: Optional[str]) -> bool:
+        return value is None or value.strip() == ""
+
+    def _all_cost_fields_blank(self, rec: OrderRecord) -> bool:
+        return (
+            self._is_blank(rec.product_price)
+            and self._is_blank(rec.packaging_price)
+            and self._is_blank(rec.freight)
+        )

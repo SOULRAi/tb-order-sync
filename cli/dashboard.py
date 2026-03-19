@@ -37,7 +37,7 @@ class DashboardApp:
             choice = self._ask(
                 "选择操作",
                 default="1",
-                choices={"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "0"},
+                choices={"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "0"},
             )
             if not self._handle_choice(choice):
                 break
@@ -54,6 +54,8 @@ class DashboardApp:
     def _build_screen(self) -> Group:
         daemon_status = self._daemon.status()
         state = self._state_svc.load(quiet=True)
+        last_run = self._state_svc.load_last_run(quiet=True)
+        autostart_status = self._daemon.autostart_status()
 
         title = Text("多表格同步与退款标记服务", style="bold white")
         subtitle = Text("Scheduler Console", style="bold #8ecae6")
@@ -71,13 +73,13 @@ class DashboardApp:
             box=box.ROUNDED,
         )
         daemon_panel = Panel(
-            self._build_daemon_table(daemon_status),
+            self._build_daemon_table(daemon_status, autostart_status),
             title="[bold #023047]守护进程[/bold #023047]",
             border_style="#90be6d" if daemon_status.running else "#f4a261",
             box=box.ROUNDED,
         )
         state_panel = Panel(
-            self._build_state_table(state),
+            self._build_state_table(state, last_run),
             title="[bold #023047]同步状态[/bold #023047]",
             border_style="#ffb703",
             box=box.ROUNDED,
@@ -126,22 +128,27 @@ class DashboardApp:
         table.add_row("Dry Run", "开启" if self._settings.dry_run else "关闭")
         return table
 
-    def _build_daemon_table(self, status) -> Table:
+    def _build_daemon_table(self, status, autostart_status) -> Table:
         table = Table(box=None, show_header=False, pad_edge=False)
         table.add_column(style="bold white")
         table.add_column(style="#023047")
         table.add_row("状态", "[green]运行中[/green]" if status.running else "[yellow]未运行[/yellow]")
+        table.add_row("登录自启", "[green]已启用[/green]" if autostart_status.enabled else "[yellow]未启用[/yellow]")
         table.add_row("PID", str(status.pid or "-"))
         table.add_row("启动时间", status.started_at or "-")
         table.add_row("日志文件", status.log_file.name)
         table.add_row("PID 文件", status.pid_file.name)
         return table
 
-    def _build_state_table(self, state) -> Table:
+    def _build_state_table(self, state, last_run) -> Table:
         table = Table(box=None, show_header=False, pad_edge=False)
         table.add_column(style="bold white")
         table.add_column(style="#023047")
         table.add_row("上次运行", self._fmt_time(state.last_run_at))
+        if last_run is not None:
+            table.add_row("最近结果", "[green]成功[/green]" if last_run.success else "[red]失败[/red]")
+            table.add_row("最近变更", str(last_run.rows_changed))
+            table.add_row("最近异常", str(last_run.rows_error))
         table.add_row("A 表指纹", str(len(state.a_table_fingerprints)))
         table.add_row("退款快照", str(len(state.b_table_refund_set)))
         table.add_row("退款哈希", state.b_table_refund_hash[:12] if state.b_table_refund_hash else "-")
@@ -176,6 +183,9 @@ class DashboardApp:
         table.add_row("9", "配置向导", "打开交互式 setup")
         table.add_row("10", "配置检查", "检查 .env 完整性")
         table.add_row("11", "前台调度", "当前终端直接运行 scheduler")
+        table.add_row("12", "启用登录自启", "登录系统后自动拉起后台调度")
+        table.add_row("13", "停用登录自启", "移除当前用户的自启配置")
+        table.add_row("14", "查看自启状态", "检查当前用户的登录自启状态")
         table.add_row("0", "退出", "返回系统")
         return table
 
@@ -204,6 +214,12 @@ class DashboardApp:
             self._run_setup(check=True)
         elif choice == "11":
             self._run_foreground_scheduler()
+        elif choice == "12":
+            self._daemon_action("autostart-enable")
+        elif choice == "13":
+            self._daemon_action("autostart-disable")
+        elif choice == "14":
+            self._daemon_action("autostart-status")
         return True
 
     def _run_task(self, task: str, *, dry_run: bool = False) -> None:
@@ -227,18 +243,33 @@ class DashboardApp:
                 str(item.rows_changed),
                 str(item.rows_error),
             )
-        self._pause_with_panel(Panel(table, title="执行结果", border_style="#219ebc", box=box.ROUNDED))
+        body: Group | Table = table
+        failures = [item for item in results if item.error_message]
+        if failures:
+            failure_table = Table(box=box.SIMPLE_HEAVY, expand=True)
+            failure_table.add_column("任务", style="bold red")
+            failure_table.add_column("失败原因", style="white")
+            for item in failures:
+                failure_table.add_row(item.task_name.value, item.error_message or "")
+            body = Group(table, Panel(failure_table, title="失败详情", border_style="red", box=box.ROUNDED))
+        self._pause_with_panel(Panel(body, title="执行结果", border_style="#219ebc", box=box.ROUNDED))
 
     def _daemon_action(self, action: str) -> None:
-        if action == "start" and not self._ensure_config():
+        if action in {"start", "autostart-enable"} and not self._ensure_config():
             return
 
         if action == "start":
             status = self._daemon.start()
         elif action == "stop":
             status = self._daemon.stop(force=True)
-        else:
+        elif action == "restart":
             status = self._daemon.restart()
+        elif action == "autostart-enable":
+            status = self._daemon.enable_autostart()
+        elif action == "autostart-disable":
+            status = self._daemon.disable_autostart()
+        else:
+            status = self._daemon.autostart_status()
 
         self._pause_with_panel(Panel(status.message, title="守护结果", border_style="#90be6d", box=box.ROUNDED))
 
@@ -282,7 +313,7 @@ class DashboardApp:
     def _is_config_ready(self) -> bool:
         fields = [
             self._settings.tencent_client_id,
-            self._settings.tencent_client_secret,
+            self._settings.tencent_open_id,
             self._settings.tencent_access_token,
             self._settings.tencent_a_file_id,
             self._settings.tencent_a_sheet_id,

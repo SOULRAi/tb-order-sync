@@ -3,19 +3,21 @@
 Business rules:
   - Read B table column A (order numbers) to build refund set
   - Scan A table column H (order numbers)
-  - If A row's order_no is in refund set → write "进入退款流程" to A table I column
+  - If A row's order_no is in refund set → write "已退款" to A table I column
   - If not in refund set → clear I column
-  - Optional: set/clear row background color
+  - Optional: set/clear row-level highlight style
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from typing import Any, Optional
 
 from config.mappings import ColumnMapping, get_column_mapping
 from config.settings import Settings, SyncMode, get_settings
 from connectors.base import BaseSheetConnector, CellUpdate
+from models.state_models import SyncState
 from models.task_models import TaskName, TaskResult
 from services.state_service import StateService
 from utils.diff import row_fingerprint, set_hash
@@ -24,7 +26,7 @@ from utils.parser import normalize_order_no
 
 logger = get_logger(__name__)
 
-# Background colors for optional style update
+# Text highlight colors for optional style update
 _BG_RED = "#FF4D4F"
 _BG_DEFAULT = None  # None means reset / no color
 
@@ -66,9 +68,14 @@ class RefundMatchService:
             # 2. Read A table
             a_rows = self._read_a_table()
             result.rows_read = len(a_rows)
+            a_scan_hash = self._build_a_scan_hash(a_rows)
 
-            # 3. Incremental short-circuit: if refund set unchanged and mode=incremental
-            if mode == SyncMode.INCREMENTAL and new_refund_hash == state.b_table_refund_hash:
+            # 3. Incremental short-circuit: only skip when both B refunds and A scan are unchanged
+            if (
+                mode == SyncMode.INCREMENTAL
+                and new_refund_hash == state.b_table_refund_hash
+                and a_scan_hash == state.a_table_refund_scan_hash
+            ):
                 logger.info("Refund set unchanged, skipping (incremental mode)")
                 result.finish()
                 return result
@@ -91,6 +98,7 @@ class RefundMatchService:
 
                 state.b_table_refund_hash = new_refund_hash
                 state.b_table_refund_set = sorted(refund_set)
+                state.a_table_refund_scan_hash = self._build_desired_scan_hash(a_rows, refund_set)
                 state.last_run_at = datetime.now()
                 self._state_svc.save(state)
             else:
@@ -132,6 +140,29 @@ class RefundMatchService:
         )
         return rows[1:] if rows else []
 
+    def _build_a_scan_hash(self, a_rows: list[list[Any]]) -> str:
+        m = self._map
+        row_hashes = []
+        for idx, row in enumerate(a_rows):
+            order_no = normalize_order_no(row[m.a_order_no] if m.a_order_no < len(row) else None)
+            current_status = (
+                str(row[m.a_refund_status]).strip()
+                if m.a_refund_status < len(row) and row[m.a_refund_status] is not None
+                else ""
+            )
+            row_hashes.append(row_fingerprint([idx, order_no, current_status]))
+        return row_fingerprint(row_hashes)
+
+    def _build_desired_scan_hash(self, a_rows: list[list[Any]], refund_set: set[str]) -> str:
+        m = self._map
+        refund_text = self._settings.refund_status_text
+        row_hashes = []
+        for idx, row in enumerate(a_rows):
+            order_no = normalize_order_no(row[m.a_order_no] if m.a_order_no < len(row) else None)
+            desired = refund_text if order_no and order_no in refund_set else ""
+            row_hashes.append(row_fingerprint([idx, order_no, desired]))
+        return row_fingerprint(row_hashes)
+
     def _match(
         self,
         a_rows: list[list[Any]],
@@ -151,12 +182,17 @@ class RefundMatchService:
 
         for idx, row in enumerate(a_rows):
             row_num = idx + 1  # 1-based (0 is header)
+            current_status = str(row[m.a_refund_status]).strip() if m.a_refund_status < len(row) and row[m.a_refund_status] is not None else ""
             order_no = normalize_order_no(row[m.a_order_no] if m.a_order_no < len(row) else None)
 
             if not order_no:
+                if current_status:
+                    updates.append(CellUpdate(row=row_num, col=m.a_refund_status, value=""))
+                    style_ops.append((row_num, _BG_DEFAULT))
+                    changed += 1
+                    logger.info("Row %d: 单号为空，清除退款标记", row_num)
                 continue
 
-            current_status = str(row[m.a_refund_status]).strip() if m.a_refund_status < len(row) and row[m.a_refund_status] is not None else ""
             is_refund = order_no in refund_set
 
             if is_refund:
@@ -184,7 +220,9 @@ class RefundMatchService:
         return updates, style_ops, changed
 
     def _apply_styles(self, ops: list[tuple[int, Optional[str]]]) -> None:
-        for row_idx, color in ops:
+        failures: list[str] = []
+        total = len(ops)
+        for index, (row_idx, color) in enumerate(ops):
             try:
                 self._conn.update_row_style(
                     self._settings.tencent_a_file_id,
@@ -192,5 +230,10 @@ class RefundMatchService:
                     row_idx,
                     bg_color=color,
                 )
+                if index + 1 < total:
+                    time.sleep(0.2)
             except Exception as exc:
-                logger.warning("Failed to update style for row %d: %s", row_idx, exc)
+                failures.append(f"row={row_idx} error={exc}")
+
+        if failures:
+            raise RuntimeError("Style update failed: " + "; ".join(failures))

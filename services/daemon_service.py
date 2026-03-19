@@ -22,6 +22,8 @@ logger = get_logger(__name__)
 _PID_FILENAME = "scheduler.pid"
 _META_FILENAME = "scheduler.meta.json"
 _LOG_FILENAME = "scheduler.console.log"
+_AUTOSTART_LABEL = "com.tb-order-sync.scheduler"
+_WINDOWS_TASK_NAME = "TBOrderSyncScheduler"
 _WINDOWS_PROCESS_TERMINATE = 0x0001
 _WINDOWS_QUERY_LIMITED_INFORMATION = 0x1000
 _WINDOWS_STILL_ACTIVE = 259
@@ -39,6 +41,15 @@ class DaemonStatus:
     started_at: str | None = None
     command: list[str] | None = None
     stale: bool = False
+
+
+@dataclass(slots=True)
+class AutostartStatus:
+    """Current login-start status."""
+
+    enabled: bool
+    message: str
+    target: str
 
 
 class DaemonService:
@@ -225,10 +236,133 @@ class DaemonService:
         with self._log_path.open("r", encoding="utf-8", errors="replace") as handle:
             return "".join(deque(handle, maxlen=max(1, lines)))
 
+    def autostart_status(self) -> AutostartStatus:
+        """Return whether login-start is enabled for the current user."""
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["schtasks", "/Query", "/TN", _WINDOWS_TASK_NAME],
+                    capture_output=True,
+                    text=True,
+                )
+                enabled = result.returncode == 0
+                return AutostartStatus(
+                    enabled=enabled,
+                    message="已启用登录自启" if enabled else "未启用登录自启",
+                    target=_WINDOWS_TASK_NAME,
+                )
+            except FileNotFoundError:
+                return AutostartStatus(False, "系统未找到 schtasks，无法检查登录自启。", _WINDOWS_TASK_NAME)
+
+        plist_path = self._launch_agent_path()
+        enabled = plist_path.exists()
+        return AutostartStatus(
+            enabled=enabled,
+            message="已启用登录自启" if enabled else "未启用登录自启",
+            target=str(plist_path),
+        )
+
+    def enable_autostart(self) -> AutostartStatus:
+        """Enable login-start for the current user."""
+        if os.name == "nt":
+            try:
+                command = self._autostart_command_line()
+                result = subprocess.run(
+                    [
+                        "schtasks",
+                        "/Create",
+                        "/F",
+                        "/SC",
+                        "ONLOGON",
+                        "/RL",
+                        "LIMITED",
+                        "/TN",
+                        _WINDOWS_TASK_NAME,
+                        "/TR",
+                        command,
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    msg = (result.stderr or result.stdout or "未知错误").strip()
+                    return AutostartStatus(False, f"启用登录自启失败: {msg}", _WINDOWS_TASK_NAME)
+                return AutostartStatus(True, "已启用登录自启（Windows 任务计划）", _WINDOWS_TASK_NAME)
+            except FileNotFoundError:
+                return AutostartStatus(False, "系统未找到 schtasks，无法启用登录自启。", _WINDOWS_TASK_NAME)
+
+        plist_path = self._launch_agent_path()
+        plist_path.parent.mkdir(parents=True, exist_ok=True)
+        plist_path.write_text(self._launch_agent_plist(), encoding="utf-8")
+        try:
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
+            result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+            if result.returncode != 0:
+                msg = (result.stderr or result.stdout or "未知错误").strip()
+                return AutostartStatus(False, f"启用登录自启失败: {msg}", str(plist_path))
+            return AutostartStatus(True, "已启用登录自启（macOS LaunchAgent）", str(plist_path))
+        except FileNotFoundError:
+            return AutostartStatus(False, "系统未找到 launchctl，无法启用登录自启。", str(plist_path))
+
+    def disable_autostart(self) -> AutostartStatus:
+        """Disable login-start for the current user."""
+        if os.name == "nt":
+            try:
+                result = subprocess.run(
+                    ["schtasks", "/Delete", "/F", "/TN", _WINDOWS_TASK_NAME],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode != 0:
+                    msg = (result.stderr or result.stdout or "任务不存在").strip()
+                    return AutostartStatus(False, f"停用登录自启失败: {msg}", _WINDOWS_TASK_NAME)
+                return AutostartStatus(False, "已停用登录自启（Windows 任务计划）", _WINDOWS_TASK_NAME)
+            except FileNotFoundError:
+                return AutostartStatus(False, "系统未找到 schtasks，无法停用登录自启。", _WINDOWS_TASK_NAME)
+
+        plist_path = self._launch_agent_path()
+        if plist_path.exists():
+            try:
+                subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True, text=True)
+            except FileNotFoundError:
+                return AutostartStatus(False, "系统未找到 launchctl，无法停用登录自启。", str(plist_path))
+            plist_path.unlink(missing_ok=True)
+        return AutostartStatus(False, "已停用登录自启（macOS LaunchAgent）", str(plist_path))
+
     def _build_spawn_command(self) -> list[str]:
         if getattr(sys, "frozen", False):
             return [str(Path(sys.executable).resolve()), "schedule"]
         return [sys.executable, str(PROJECT_ROOT / "main.py"), "schedule"]
+
+    def _autostart_command_line(self) -> str:
+        return subprocess.list2cmdline(self._build_spawn_command())
+
+    @staticmethod
+    def _launch_agent_path() -> Path:
+        return Path.home() / "Library" / "LaunchAgents" / f"{_AUTOSTART_LABEL}.plist"
+
+    def _launch_agent_plist(self) -> str:
+        command = self._build_spawn_command()
+        args = "\n".join(f"      <string>{arg}</string>" for arg in command)
+        return (
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+            "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" "
+            "\"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+            "<plist version=\"1.0\">\n"
+            "<dict>\n"
+            f"  <key>Label</key>\n  <string>{_AUTOSTART_LABEL}</string>\n"
+            "  <key>ProgramArguments</key>\n"
+            "  <array>\n"
+            f"{args}\n"
+            "  </array>\n"
+            f"  <key>WorkingDirectory</key>\n  <string>{PROJECT_ROOT}</string>\n"
+            "  <key>RunAtLoad</key>\n  <true/>\n"
+            "  <key>KeepAlive</key>\n  <false/>\n"
+            f"  <key>StandardOutPath</key>\n  <string>{self._log_path}</string>\n"
+            f"  <key>StandardErrorPath</key>\n  <string>{self._log_path}</string>\n"
+            "</dict>\n"
+            "</plist>\n"
+        )
 
     def _read_pid(self) -> int | None:
         if not self._pid_path.exists():

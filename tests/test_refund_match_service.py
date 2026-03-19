@@ -9,6 +9,7 @@ from connectors.base import BaseSheetConnector
 from models.state_models import SyncState
 from services.refund_match_service import RefundMatchService
 from services.state_service import StateService
+from utils.diff import set_hash
 
 
 def _make_mapping() -> ColumnMapping:
@@ -25,7 +26,7 @@ def _make_settings(**overrides) -> Settings:
         tencent_b_file_id="b_file", tencent_b_sheet_id="b_sheet",
         refund_match_mode=SyncMode.FULL, dry_run=False,
         write_batch_size=100, enable_style_update=False,
-        refund_status_text="进入退款流程",
+        refund_status_text="已退款",
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -70,12 +71,12 @@ class TestRefundMatch:
         assert result.success
         assert result.rows_changed == 1
         updates = conn.batch_update.call_args[0][2]
-        assert updates[0].value == "进入退款流程"
+        assert updates[0].value == "已退款"
         assert updates[0].row == 1  # SF001 is row 1
 
     def test_clears_old_refund_status(self):
         a_rows = [
-            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", "进入退款流程"],
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", "已退款"],
         ]
         b_rows = []  # No refunds anymore
         svc, conn, _ = _make_service(a_rows, b_rows)
@@ -87,7 +88,7 @@ class TestRefundMatch:
 
     def test_no_change_needed(self):
         a_rows = [
-            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", "进入退款流程"],
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", "已退款"],
         ]
         b_rows = [
             ["SF001", "RT001", "店铺A", "wx1", "产品A", "损坏", "100", "已退", "", "", "", ""],
@@ -128,3 +129,59 @@ class TestRefundMatch:
         svc, conn, _ = _make_service(a_rows, b_rows)
         result = svc.run()
         assert result.rows_changed == 2
+
+    def test_applies_row_style_when_enabled(self):
+        a_rows = [
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", ""],
+        ]
+        b_rows = [["SF001", "", "", "", "", "", "", "", "", "", "", ""]]
+        svc, conn, _ = _make_service(a_rows, b_rows, enable_style_update=True)
+
+        result = svc.run()
+
+        assert result.rows_changed == 1
+        conn.update_row_style.assert_called_once_with("a_file", "a_sheet", 1, bg_color="#FF4D4F")
+
+    def test_unmatched_order_is_not_marked(self):
+        a_rows = [
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", ""],
+        ]
+        b_rows = [["SF999", "", "", "", "", "", "", "", "", "", "", ""]]
+        svc, conn, _ = _make_service(a_rows, b_rows)
+
+        result = svc.run()
+
+        assert result.rows_changed == 0
+        conn.batch_update.assert_not_called()
+
+    def test_incremental_processes_new_a_rows_when_b_set_is_unchanged(self):
+        a_rows = [
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", ""],
+        ]
+        b_rows = [["SF001", "", "", "", "", "", "", "", "", "", "", ""]]
+        svc, conn, state_svc = _make_service(a_rows, b_rows, refund_match_mode=SyncMode.INCREMENTAL)
+        state_svc.load.return_value = SyncState(
+            b_table_refund_hash=set_hash(["SF001"]),
+            a_table_refund_scan_hash="old-scan-hash",
+        )
+
+        result = svc.run(mode=SyncMode.INCREMENTAL)
+
+        assert result.rows_changed == 1
+        conn.batch_update.assert_called_once()
+
+    def test_repeat_run_does_not_rewrite_stable_rows(self):
+        a_rows = [
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", "已退款"],
+        ]
+        b_rows = [["SF001", "", "", "", "", "", "", "", "", "", "", ""]]
+        svc, conn, state_svc = _make_service(a_rows, b_rows, refund_match_mode=SyncMode.INCREMENTAL)
+        state_svc.load.return_value = SyncState(
+            b_table_refund_hash=set_hash(["SF001"]),
+            a_table_refund_scan_hash=svc._build_a_scan_hash(a_rows),
+        )
+
+        result = svc.run(mode=SyncMode.INCREMENTAL)
+
+        assert result.rows_changed == 0
+        conn.batch_update.assert_not_called()

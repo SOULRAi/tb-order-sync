@@ -1,14 +1,13 @@
 """Tencent Docs (腾讯文档) sheet connector.
 
-API Reference (needs verification):
-  腾讯文档开放平台: https://docs.qq.com/open/wiki/
+Uses the official Online Sheet v3 APIs:
+  - GET  /openapi/spreadsheet/v3/files/{fileId}/{sheetId}/{range}
+  - POST /openapi/spreadsheet/v3/files/{fileId}/batchUpdate
 
-TODO / NEED_VERIFY:
-  - OAuth2 token refresh flow: the current implementation assumes a pre-obtained
-    access_token passed via config. Production should implement refresh_token cycle.
-  - Exact API endpoints and request/response schemas are marked inline.
-  - Rate limit specifics (QPS, batch size caps) need confirmation from docs.
-  - Style/formatting API availability is uncertain — update_row_style is best-effort.
+Notes:
+  - Access token refresh is still external. Supply a valid access token in config.
+  - The sheet model exposes text color formatting. For "整行标红", this connector
+    rewrites the full row with red text formatting.
 """
 
 from __future__ import annotations
@@ -25,18 +24,15 @@ from utils.retry import default_retry
 
 logger = get_logger(__name__)
 
-# ── TODO / NEED_VERIFY ─────────────────────────────────────────────────────
-# Base URL for Tencent Docs Open API.
-# 腾讯文档智能表格(SmartSheet)和在线表格(Sheet)的API路径可能不同，
-# 需要根据实际文档类型确认。
-# 以下为在线表格(Sheet)的推测路径：
-_BASE_URL = "https://docs.qq.com/openapi/v2"
-
-# TODO: 确认实际的 API 路径格式
-# 读取单元格数据: GET /openapi/v2/files/{fileID}/sheets/{sheetID}/content
-# 写入单元格数据: PUT /openapi/v2/files/{fileID}/sheets/{sheetID}/content
-# 这些路径需要与腾讯文档开放平台文档核实
-# ────────────────────────────────────────────────────────────────────────────
+_BASE_URL = "https://docs.qq.com"
+# Tencent Docs v3 range query limit:
+# rows <= 1000, cols <= 200, total cells <= 10000.
+# Current project only needs up to column I/L, so keep the query window narrow.
+_MAX_QUERY_ROWS = 200
+_MAX_QUERY_COLS = 20
+_MAX_BATCH_REQUESTS = 5
+_BATCH_SLEEP_SECONDS = 0.5
+_DEFAULT_TEXT_COLOR = {"red": 0, "green": 0, "blue": 0, "alpha": 255}
 
 
 class TencentDocsConnector(BaseSheetConnector):
@@ -60,33 +56,23 @@ class TencentDocsConnector(BaseSheetConnector):
         )
 
     def _build_headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Content-Type": "application/json",
+            "Accept": "application/json",
             "Access-Token": self._access_token,
-            # TODO / NEED_VERIFY: 腾讯文档 API 的认证 header 名称
-            # 可能是 "Access-Token" 或 "Authorization: Bearer <token>"
-            # 需根据实际文档确认
+            "Client-Id": self._client_id,
         }
+        if self._open_id:
+            headers["Open-Id"] = self._open_id
+        else:
+            logger.warning("Tencent connector initialized without Open-Id; official APIs require it")
+        return headers
 
-    # ── Token refresh (placeholder) ────────────────────────────────────────
     def refresh_token(self) -> None:
-        """TODO: Implement OAuth2 token refresh using client_id + client_secret.
-
-        腾讯文档的 token 有效期通常较短，生产环境必须实现自动刷新。
-        当前版本依赖外部提供有效的 access_token。
-        """
-        # TODO / NEED_VERIFY:
-        # POST /oauth/v2/token
-        # {
-        #   "client_id": ...,
-        #   "client_secret": ...,
-        #   "grant_type": "refresh_token",
-        #   "refresh_token": ...
-        # }
+        """Token refresh remains external in this MVP."""
         raise NotImplementedError("Token refresh not yet implemented — supply valid access_token in .env")
 
-    # ── Read ───────────────────────────────────────────────────────────────
-    @default_retry(max_attempts=3)
+    @default_retry(max_attempts=5)
     def read_rows(
         self,
         file_id: str,
@@ -95,70 +81,63 @@ class TencentDocsConnector(BaseSheetConnector):
         start_row: int = 0,
         end_row: Optional[int] = None,
     ) -> list[list[Any]]:
-        """Read rows from a Tencent Docs sheet.
+        """Read rows from a Tencent Docs sheet using the official v3 range API."""
+        if end_row is not None and end_row <= start_row:
+            return []
 
-        TODO / NEED_VERIFY: 确认实际的读取 API endpoint 和参数格式。
-        以下为推测实现，需根据腾讯文档开放平台文档调整。
-        """
-        # TODO / NEED_VERIFY: 实际的 API 路径和参数
-        # 可能的路径: GET /files/{fileID}/sheets/{sheetID}/content
-        # 也可能需要指定 range，如 "A1:Z1000"
-        url = f"/files/{file_id}/sheets/{sheet_id}/content"
-        params: dict[str, Any] = {}
-        if end_row is not None:
-            # TODO: 腾讯文档可能使用 A1 notation 的 range 参数
-            # 例如 range = "A{start_row+1}:Z{end_row+1}"
-            params["range"] = f"A{start_row + 1}:ZZ{end_row + 1}"
-        else:
-            params["range"] = f"A{start_row + 1}:ZZ"
+        max_col_letter = col_index_to_letter(_MAX_QUERY_COLS - 1)
+        all_rows: list[list[Any]] = []
+        next_row = start_row
 
-        logger.info("Reading rows from file=%s sheet=%s range=%s", file_id, sheet_id, params.get("range"))
+        while True:
+            chunk_end = next_row + _MAX_QUERY_ROWS
+            if end_row is not None:
+                chunk_end = min(chunk_end, end_row)
 
-        resp = self._http.get(url, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+            range_ref = f"A{next_row + 1}:{max_col_letter}{chunk_end}"
+            url = f"/openapi/spreadsheet/v3/files/{file_id}/{sheet_id}/{range_ref}"
+            logger.info("Reading rows from file=%s sheet=%s range=%s", file_id, sheet_id, range_ref)
 
-        # TODO / NEED_VERIFY: 解析响应数据结构
-        # 腾讯文档返回的数据格式需要确认，以下是推测：
-        # data = { "data": { "rows": [[cell, ...], ...] } }
-        # 或: data = { "data": [[cell, ...], ...] }
-        rows = data.get("data", {}).get("rows", [])
-        if not rows and isinstance(data.get("data"), list):
-            rows = data["data"]
+            try:
+                data = self._unwrap_response(self._http.get(url))
+            except RuntimeError as exc:
+                if all_rows and "range' invalid" in str(exc):
+                    logger.info("Stop reading at invalid range boundary: %s", range_ref)
+                    break
+                raise
+            grid_data = data.get("gridData", data)
+            rows = self._grid_data_to_rows(grid_data)
+            all_rows.extend(rows)
 
-        logger.info("Read %d rows from file=%s sheet=%s", len(rows), file_id, sheet_id)
-        return rows
+            requested_rows = chunk_end - next_row
+            if end_row is not None and chunk_end >= end_row:
+                break
+            if len(rows) < requested_rows:
+                break
 
-    # ── Write ──────────────────────────────────────────────────────────────
-    @default_retry(max_attempts=3)
+            next_row = chunk_end
+
+        logger.info("Read %d rows from file=%s sheet=%s", len(all_rows), file_id, sheet_id)
+        return all_rows
+
+    @default_retry(max_attempts=5)
     def write_cells(
         self,
         file_id: str,
         sheet_id: str,
         updates: list[CellUpdate],
     ) -> None:
-        """Write cell values to a Tencent Docs sheet.
-
-        TODO / NEED_VERIFY: 确认写入 API 的 endpoint 和 request body 格式。
-        """
+        """Write cell values via the official v3 batchUpdate API."""
         if not updates:
             return
 
-        # TODO / NEED_VERIFY: 构建写入请求体
-        # 腾讯文档可能支持批量单元格更新，格式推测如下:
-        # PUT /files/{fileID}/sheets/{sheetID}/content
-        # body = { "data": [ {"range": "G2", "value": 123}, ... ] }
-        payload = self._build_write_payload(updates)
-        url = f"/files/{file_id}/sheets/{sheet_id}/content"
-
+        url = f"/openapi/spreadsheet/v3/files/{file_id}/batchUpdate"
+        payload = self._build_write_payload(sheet_id, updates)
         logger.info("Writing %d cells to file=%s sheet=%s", len(updates), file_id, sheet_id)
-
-        resp = self._http.put(url, json=payload)
-        resp.raise_for_status()
-
+        self._unwrap_response(self._http.post(url, json=payload))
         logger.info("Successfully wrote %d cells", len(updates))
 
-    @default_retry(max_attempts=3)
+    @default_retry(max_attempts=5)
     def batch_update(
         self,
         file_id: str,
@@ -166,16 +145,16 @@ class TencentDocsConnector(BaseSheetConnector):
         updates: list[CellUpdate],
         batch_size: int = 100,
     ) -> None:
-        """Write cells in batches to stay within API rate limits."""
+        """Write cells in batches while respecting Tencent Docs batch limits."""
         total = len(updates)
-        for i in range(0, total, batch_size):
-            batch = updates[i : i + batch_size]
+        chunk_size = max(1, min(batch_size, _MAX_BATCH_REQUESTS))
+        for i in range(0, total, chunk_size):
+            batch = updates[i : i + chunk_size]
             self.write_cells(file_id, sheet_id, batch)
-            if i + batch_size < total:
-                time.sleep(0.5)  # Basic rate-limit courtesy
-        logger.info("Batch update complete: %d cells in %d batches", total, (total + batch_size - 1) // batch_size)
+            if i + chunk_size < total:
+                time.sleep(_BATCH_SLEEP_SECONDS)
+        logger.info("Batch update complete: %d cells in %d batches", total, (total + chunk_size - 1) // chunk_size)
 
-    # ── Column management ──────────────────────────────────────────────────
     def ensure_column(
         self,
         file_id: str,
@@ -183,20 +162,14 @@ class TencentDocsConnector(BaseSheetConnector):
         col_letter: str,
         header_name: str,
     ) -> None:
-        """Ensure column header exists; write it if missing.
-
-        TODO / NEED_VERIFY: 可能需要先读取 header row，检查列是否存在，
-        如果不存在则需要插入列或写入 header。
-        """
+        """Ensure column header exists; write it if missing."""
         header = self.get_header(file_id, sheet_id)
         from config.mappings import col_letter_to_index
-        idx = col_letter_to_index(col_letter)
 
+        idx = col_letter_to_index(col_letter)
         if idx < len(header) and header[idx] == header_name:
-            logger.debug("Column %s already has header '%s'", col_letter, header_name)
             return
 
-        # Write the header cell
         self.write_cells(file_id, sheet_id, [CellUpdate(row=0, col=idx, value=header_name)])
         logger.info("Ensured column %s header = '%s'", col_letter, header_name)
 
@@ -211,7 +184,7 @@ class TencentDocsConnector(BaseSheetConnector):
             return [str(v) if v is not None else "" for v in rows[0]]
         return []
 
-    # ── Style (optional) ───────────────────────────────────────────────────
+    @default_retry(max_attempts=5)
     def update_row_style(
         self,
         file_id: str,
@@ -219,35 +192,172 @@ class TencentDocsConnector(BaseSheetConnector):
         row_index: int,
         bg_color: Optional[str] = None,
     ) -> None:
-        """Optional: set row background color.
-
-        TODO / NEED_VERIFY: 腾讯文档是否支持通过 API 设置单元格/行样式。
-        如果不支持，此方法将仅记录日志并跳过。
-        当前实现为 best-effort placeholder。
-        """
-        if bg_color is None:
-            logger.debug("update_row_style called with no color, skipping row=%d", row_index)
+        """Rewrite a row with red or default text formatting."""
+        header = self.get_header(file_id, sheet_id)
+        rows = self.read_rows(file_id, sheet_id, start_row=row_index, end_row=row_index + 1)
+        if not rows:
+            logger.warning("No row found for style update: row=%d file=%s sheet=%s", row_index, file_id, sheet_id)
             return
 
-        # TODO / NEED_VERIFY: 样式 API 路径和格式
-        # 可能的路径: PUT /files/{fileID}/sheets/{sheetID}/styles
-        # body = { "range": "A{row}:Z{row}", "style": {"backgroundColor": "#FF0000"} }
-        logger.info(
-            "Style update requested for row=%d bg=%s (file=%s) — "
-            "TODO: verify Tencent Docs style API support",
-            row_index, bg_color, file_id,
-        )
+        row_values = list(rows[0])
+        width = max(len(header), len(row_values))
+        if width == 0:
+            return
+        if len(row_values) < width:
+            row_values.extend([""] * (width - len(row_values)))
 
-    # ── Internal helpers ───────────────────────────────────────────────────
+        text_color = self._hex_to_rgba(bg_color) if bg_color else _DEFAULT_TEXT_COLOR
+        payload = {
+            "requests": [
+                {
+                    "updateRangeRequest": {
+                        "sheetId": sheet_id,
+                        "gridData": {
+                            "startRow": row_index,
+                            "startColumn": 0,
+                            "rows": [
+                                {
+                                    "values": [
+                                        self._build_cell_data(value, text_color=text_color)
+                                        for value in row_values
+                                    ]
+                                }
+                            ],
+                        },
+                    }
+                }
+            ]
+        }
+        url = f"/openapi/spreadsheet/v3/files/{file_id}/batchUpdate"
+        self._unwrap_response(self._http.post(url, json=payload))
+        logger.info("Updated row style for row=%d file=%s sheet=%s", row_index, file_id, sheet_id)
+
     @staticmethod
-    def _build_write_payload(updates: list[CellUpdate]) -> dict[str, Any]:
-        """Build the API request body for a batch cell write.
+    def _grid_data_to_rows(grid_data: dict[str, Any]) -> list[list[Any]]:
+        rows: list[list[Any]] = []
+        for row_data in grid_data.get("rows", []):
+            rows.append([
+                TencentDocsConnector._extract_cell_value(cell)
+                for cell in row_data.get("values", [])
+            ])
+        return rows
 
-        TODO / NEED_VERIFY: 确认腾讯文档的批量写入 request body 格式。
-        """
-        cells = []
-        for u in updates:
-            col_letter = col_index_to_letter(u.col)
-            cell_ref = f"{col_letter}{u.row + 1}"  # A1 notation, 1-based
-            cells.append({"range": cell_ref, "value": u.value})
-        return {"data": cells}
+    @staticmethod
+    def _extract_cell_value(cell: dict[str, Any]) -> Any:
+        if not isinstance(cell, dict):
+            return None
+        cell_value = cell.get("cellValue") or {}
+        if "number" in cell_value:
+            return cell_value["number"]
+        if "text" in cell_value:
+            return cell_value["text"]
+        if "link" in cell_value:
+            link = cell_value["link"] or {}
+            return link.get("text") or link.get("url") or ""
+        if "location" in cell_value:
+            location = cell_value["location"] or {}
+            return location.get("name") or ""
+        if "time" in cell_value:
+            return cell_value["time"]
+        if "select" in cell_value:
+            select = cell_value["select"] or {}
+            return select.get("text") or ""
+        return None
+
+    @staticmethod
+    def _unwrap_response(resp: httpx.Response) -> dict[str, Any]:
+        if resp.status_code == 429:
+            raise RuntimeError("Tencent Docs API failed: HTTP 429 Requests Over Limit. Please Retry Later.")
+        resp.raise_for_status()
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Unexpected Tencent Docs response: {payload!r}")
+
+        if "ret" in payload and payload.get("ret") not in (0, None):
+            raise RuntimeError(
+                TencentDocsConnector._friendly_api_error(
+                    code=payload.get("ret"),
+                    message=payload.get("msg"),
+                )
+            )
+        if "code" in payload and payload.get("code") not in (0, None):
+            raise RuntimeError(
+                TencentDocsConnector._friendly_api_error(
+                    code=payload.get("code"),
+                    message=payload.get("message"),
+                )
+            )
+
+        data = payload.get("data")
+        if isinstance(data, dict):
+            return data
+        return payload
+
+    @staticmethod
+    def _friendly_api_error(code: Any, message: Any) -> str:
+        code_text = str(code)
+        message_text = str(message or "")
+        base = f"Tencent Docs API failed: code={code_text} message={message_text}"
+
+        if code_text == "400007":
+            return base + "。腾讯文档接口限流，请稍后重试。"
+        if code_text == "400001":
+            return base + "。请求参数不合法，请检查表格 ID、sheet ID、列范围或表格结构。"
+        if code_text in {"401", "401001"}:
+            return base + "。认证失败，请检查 Access Token、Client ID、Open ID。"
+        if code_text in {"403", "403001"}:
+            return base + "。权限不足，请确认应用授权和文档访问权限。"
+        return base
+
+    @staticmethod
+    def _build_write_payload(sheet_id: str, updates: list[CellUpdate]) -> dict[str, Any]:
+        return {
+            "requests": [
+                {
+                    "updateRangeRequest": {
+                        "sheetId": sheet_id,
+                        "gridData": {
+                            "startRow": update.row,
+                            "startColumn": update.col,
+                            "rows": [
+                                {
+                                    "values": [
+                                        TencentDocsConnector._build_cell_data(update.value)
+                                    ]
+                                }
+                            ],
+                        },
+                    }
+                }
+                for update in updates
+            ]
+        }
+
+    @staticmethod
+    def _build_cell_data(value: Any, text_color: Optional[dict[str, int]] = None) -> dict[str, Any]:
+        cell_data: dict[str, Any] = {"cellValue": TencentDocsConnector._build_cell_value(value)}
+        if text_color is not None:
+            cell_data["cellFormat"] = {"textFormat": {"color": text_color}}
+        return cell_data
+
+    @staticmethod
+    def _build_cell_value(value: Any) -> dict[str, Any]:
+        if isinstance(value, bool):
+            return {"text": str(value).lower()}
+        if isinstance(value, (int, float)):
+            return {"number": value}
+        if value is None:
+            return {"text": ""}
+        return {"text": str(value)}
+
+    @staticmethod
+    def _hex_to_rgba(color: str) -> dict[str, int]:
+        value = color.strip().lstrip("#")
+        if len(value) != 6:
+            raise ValueError(f"Unsupported color value: {color}")
+        return {
+            "red": int(value[0:2], 16),
+            "green": int(value[2:4], 16),
+            "blue": int(value[4:6], 16),
+            "alpha": 255,
+        }

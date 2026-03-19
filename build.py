@@ -17,6 +17,12 @@ ROOT = Path(__file__).resolve().parent
 SPEC_FILE = ROOT / "sync_service.spec"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
+DIST_RUNTIME_FILES = [
+    ".env.example",
+    "启动.bat",
+    "启动.command",
+    "快速开始.txt",
+]
 
 
 def clean() -> None:
@@ -49,10 +55,10 @@ def build() -> None:
 
     output = DIST_DIR / "sync_service"
     if output.exists():
-        # Copy .env.example to dist folder for convenience
-        example = ROOT / ".env.example"
-        if example.exists():
-            shutil.copy2(example, output / ".env.example")
+        for name in DIST_RUNTIME_FILES:
+            source = ROOT / name
+            if source.exists():
+                shutil.copy2(source, output / name)
 
         # Create state directory
         (output / "state").mkdir(exist_ok=True)

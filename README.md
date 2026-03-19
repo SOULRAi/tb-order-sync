@@ -7,7 +7,7 @@
 **多表格同步与退款标记服务**  
 面向订单运营场景的轻量自动化服务，负责同步云表格、计算毛利、标记退款状态，并支持后台守护运行。
 
-> 支持 `tb` 短命令、Rich 控制台、守护进程、Windows / macOS 一键启动，以及后续接入飞书 C 表的扩展路径。
+> 支持 `tb` 短命令、Rich 控制台、启动自检、守护进程、登录自启、Windows / macOS 一键启动，以及后续接入飞书 C 表的扩展路径。
 
 **快速导航**
 
@@ -31,7 +31,9 @@
 | ⚡ 增量同步 | 基于行指纹和退款集合 hash，仅处理变化数据 | ✅ 已实现 |
 | 🧨 全量重建 | 支持忽略缓存，对全表重新扫描和回写 | ✅ 已实现 |
 | 🖥️ Rich 控制台 | 无参启动即进入交互式控制台首页 | ✅ 已实现 |
+| 🩺 启动自检 | 配置检查 + 状态目录写入 + 腾讯文档 A/B 表读取 | ✅ 已实现 |
 | 🛡️ 守护进程 | 支持后台启动、停止、状态检查、日志查看 | ✅ 已实现 |
+| 🔌 登录自启 | 支持 Windows 任务计划 / macOS LaunchAgent | ✅ 已实现 |
 | 📦 一键分发 | 支持双击脚本、npm launcher、PyInstaller 打包 | ✅ 已实现 |
 | 🐦 飞书预留接口 | C 表同步抽象层和 connector skeleton 已预留 | 🔲 骨架已预留 |
 
@@ -45,11 +47,16 @@ npm install -g tb-order-sync
 
 tb
 tb setup
+tb check
 tb all --dry-run
 tb all
 tb daemon start
 tb daemon status
 ```
+
+首次运行说明：
+- 如果本机还没有完整配置，直接执行 `tb` 会自动进入 `setup`
+- `tb check` 会执行启动自检，确认状态目录、A 表、B 表是否可用
 
 ### 启动方式
 
@@ -84,6 +91,9 @@ tb daemon start
 tb daemon status
 tb daemon logs --lines 80
 tb daemon stop
+tb daemon autostart-enable
+tb daemon autostart-status
+tb daemon autostart-disable
 ```
 
 ### 双击启动
@@ -93,7 +103,7 @@ tb daemon stop
 | Windows | `启动.bat` |
 | macOS | `启动.command` |
 
-首次运行会自动补齐 Python 运行环境并进入 Rich 控制台。
+首次运行会自动补齐 Python 运行环境；如果本机尚未配置，会直接进入配置向导。
 
 <a id="api-guide"></a>
 ## 🔐 API 获取指引
@@ -109,8 +119,9 @@ tb daemon stop
   4. 再回到本项目执行 `tb setup`
 - 当前说明:
   - 本项目 MVP 目前依赖你手工提供有效 `Access Token`
-  - `Open ID` 先作为可选项保留
-  - 腾讯文档实际 endpoint / request schema 代码里仍有 `TODO / NEED_VERIFY`
+  - 当前运行链路要求 `Client ID + Open ID + Access Token`
+  - `Client Secret` 目前保留为可选项，后续接自动刷新 token 时再使用
+  - 在线表格 v3 读写链路已经完成真实联调验证
 
 ### 飞书 API
 
@@ -161,9 +172,9 @@ tb daemon stop
 
 ### 退款匹配
 
-- B 表 A 列单号存在于 A 表 H 列 → I 列写入 `进入退款流程`
+- B 表 A 列单号存在于 A 表 H 列 → I 列写入 `已退款`
 - 不存在 → 清空 I 列（同步取消）
-- 可选：`ENABLE_STYLE_UPDATE=true` 时额外设置行背景色标红
+- `ENABLE_STYLE_UPDATE=true` 时会把匹配行整行改成红色文字
 
 ## 🗂️ 项目结构
 
@@ -256,7 +267,7 @@ tb-order-sync/
 | 目标 | 策略 | 存储 |
 |------|------|------|
 | A 表毛利 | 对每行关键字段 (C/D/E/F/H) 生成 MD5 指纹，仅处理指纹变化行 | `state/sync_state.json` |
-| B 表退款 | 对退款单号集合生成整体 hash，集合不变则跳过 | `state/sync_state.json` |
+| B 表退款 | 同时比较退款集合 hash 和 A 表单号/退款状态扫描 hash，避免漏处理 A 表变化 | `state/sync_state.json` |
 
 <a id="daemon"></a>
 ## 🛡️ 守护进程
@@ -272,9 +283,21 @@ tb-order-sync/
   - 停止后台调度
 - `tb daemon restart`
   - 重启后台调度
+- `tb daemon autostart-enable`
+  - 启用当前用户登录自启
+- `tb daemon autostart-status`
+  - 查看登录自启状态
+- `tb daemon autostart-disable`
+  - 关闭登录自启
 
 后台控制台输出默认写入：
 - `state/scheduler.console.log`
+- `state/last_run.json`
+
+启动建议：
+- 先执行 `tb check`，确认配置和连接正常
+- 再执行 `tb daemon start`
+- 如需电脑登录后自动运行，再执行 `tb daemon autostart-enable`
 
 <a id="configuration"></a>
 ## ⚙️ 配置说明
@@ -284,7 +307,8 @@ tb-order-sync/
 ```ini
 # 腾讯文档凭证
 TENCENT_CLIENT_ID=your_client_id
-TENCENT_CLIENT_SECRET=your_client_secret
+TENCENT_CLIENT_SECRET=
+TENCENT_OPEN_ID=your_open_id
 TENCENT_ACCESS_TOKEN=your_access_token
 TENCENT_A_FILE_ID=a_table_file_id
 TENCENT_A_SHEET_ID=a_table_sheet_id
@@ -296,7 +320,7 @@ GROSS_PROFIT_MODE=incremental    # incremental | full
 REFUND_MATCH_MODE=incremental    # incremental | full
 TASK_INTERVAL_MINUTES=10         # 定时调度间隔
 DRY_RUN=false                    # true = 模拟执行不写入
-ENABLE_STYLE_UPDATE=false        # true = 退款行标红
+ENABLE_STYLE_UPDATE=true         # true = 退款行标红
 
 # 列映射（可自定义）
 A_COL_PRODUCT_PRICE=C
@@ -309,13 +333,18 @@ A_COL_REFUND_STATUS=I
 B_COL_ORDER_NO=A
 ```
 
+补充说明：
+- `tb setup` 支持直接粘贴腾讯文档完整链接，自动拆出 `File ID / Sheet ID`
+- `tb check` 会做启动自检，不只是看 `.env` 是否存在
+- 当前退款高亮效果是“整行红色文字”，不是背景填充
+
 完整配置项见 [.env.example](.env.example)。
 
 <a id="testing"></a>
 ## 🧪 测试
 
 ```bash
-# 运行全部测试（35 tests）
+# 运行全部测试（49 tests）
 pytest tests/ -v
 
 # 单独运行
@@ -342,8 +371,8 @@ pytest tests/test_refund_match_service.py -v
 
 | 方式 | 需要 Python | 适用场景 |
 |------|------------|---------|
-| 双击启动脚本（源码） | 自动下载 | 开发/内部使用 |
-| 打包 exe 分发 | 不需要 | 给非技术用户 |
+| 双击启动脚本（源码） | 自动下载 / 初始化 | 开发/内部使用 |
+| 打包分发（Windows / macOS） | 不需要 | 给非技术用户 |
 | 命令行直接运行 | 需要 | 开发者 |
 
 ## 🗺️ Roadmap

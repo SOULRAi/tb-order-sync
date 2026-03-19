@@ -21,8 +21,11 @@ class SyncState(BaseModel):
 
     last_run_at: Optional[datetime] = None
 
-    # A 表: order_no -> fingerprint
+    # A 表毛利任务: row_index -> fingerprint
     a_table_fingerprints: dict[str, str] = Field(default_factory=dict)
+
+    # A 表退款任务: 整体扫描 hash（基于单号 + 当前退款状态）
+    a_table_refund_scan_hash: str = ""
 
     # B 表: 退款单号集合 hash
     b_table_refund_hash: str = ""

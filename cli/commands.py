@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from config.settings import Settings, SyncMode, get_settings
-from models.task_models import TaskResult
+from models.task_models import RunSummary, TaskResult
 from services.daemon_service import DaemonService
 from services.state_service import StateService
 from utils.logger import get_logger, setup_logging
@@ -54,7 +55,7 @@ def has_required_runtime_config(settings: Settings) -> bool:
     """Return whether Tencent runtime essentials are configured."""
     required = [
         settings.tencent_client_id,
-        settings.tencent_client_secret,
+        settings.tencent_open_id,
         settings.tencent_access_token,
         settings.tencent_a_file_id,
         settings.tencent_a_sheet_id,
@@ -101,6 +102,12 @@ def execute_tasks(
         _print_result(result)
         results.append(result)
 
+    if results:
+        try:
+            state_svc.save_last_run(_build_run_summary(results, trigger="manual"))
+        except Exception as exc:
+            logger.warning("Failed to save last run summary: %s", exc)
+
     return results
 
 
@@ -137,9 +144,11 @@ def cmd_daemon(args: argparse.Namespace, settings: Settings) -> None:
     daemon = DaemonService(settings)
     action = args.daemon_action
 
-    if action == "start":
+    if action in {"start", "restart", "autostart-enable"}:
         if not _ensure_runtime_config(settings):
             return
+
+    if action == "start":
         status = daemon.start(force=getattr(args, "force", False))
         logger.info(status.message)
     elif action == "stop":
@@ -153,12 +162,58 @@ def cmd_daemon(args: argparse.Namespace, settings: Settings) -> None:
         logger.info(status.message)
         if status.running:
             logger.info("daemon pid=%s log=%s", status.pid, status.log_file)
+        autostart = daemon.autostart_status()
+        logger.info("%s (%s)", autostart.message, autostart.target)
+        _print_last_run_summary(settings)
     elif action == "logs":
         content = daemon.read_log_tail(lines=args.lines)
         if content:
             print(content, end="")
         else:
             logger.info("No daemon log output yet: %s", daemon.log_file)
+    elif action == "autostart-enable":
+        status = daemon.enable_autostart()
+        logger.info(status.message)
+    elif action == "autostart-disable":
+        status = daemon.disable_autostart()
+        logger.info(status.message)
+    elif action == "autostart-status":
+        status = daemon.autostart_status()
+        logger.info("%s (%s)", status.message, status.target)
+
+
+def _build_run_summary(results: list[TaskResult], *, trigger: str) -> RunSummary:
+    finished_values = [item.finished_at for item in results if item.finished_at is not None]
+    success = all(item.success for item in results)
+    message = None
+    if not success:
+        errors = [f"{item.task_name.value}: {item.error_message}" for item in results if item.error_message]
+        message = " | ".join(errors) if errors else "存在任务失败，请检查日志。"
+    return RunSummary(
+        trigger=trigger,
+        success=success,
+        started_at=min((item.started_at for item in results), default=datetime.now()),
+        finished_at=max(finished_values) if finished_values else None,
+        task_count=len(results),
+        rows_read=sum(item.rows_read for item in results),
+        rows_changed=sum(item.rows_changed for item in results),
+        rows_error=sum(item.rows_error for item in results),
+        tasks=results,
+        message=message,
+    )
+
+
+def _print_last_run_summary(settings: Settings) -> None:
+    summary = _build_state_service(settings).load_last_run(quiet=True)
+    if summary is None:
+        return
+    status = "成功" if summary.success else "失败"
+    logger.info(
+        "最近一次执行：%s trigger=%s read=%d changed=%d errors=%d",
+        status, summary.trigger, summary.rows_read, summary.rows_changed, summary.rows_error,
+    )
+    if summary.message:
+        logger.info("最近失败信息：%s", summary.message)
 
 
 def _print_result(result: TaskResult) -> None:
@@ -168,6 +223,8 @@ def _print_result(result: TaskResult) -> None:
         status, result.task_name.value, result.rows_read,
         result.rows_changed, result.rows_error, result.dry_run,
     )
+    if result.error_message:
+        logger.error("%s failed: %s", result.task_name.value, result.error_message)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,6 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_sub.add_parser("status", help="查看后台守护状态")
     daemon_logs = daemon_sub.add_parser("logs", help="查看后台日志")
     daemon_logs.add_argument("--lines", type=int, default=40, help="显示最后 N 行日志")
+    daemon_sub.add_parser("autostart-enable", help="启用登录自启")
+    daemon_sub.add_parser("autostart-disable", help="停用登录自启")
+    daemon_sub.add_parser("autostart-status", help="查看登录自启状态")
 
     setup_parser = sub.add_parser("setup", aliases=["config"], help="交互式配置向导")
     setup_parser.add_argument("--check", action="store_true", help="验证当前配置状态")
@@ -219,11 +279,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     """CLI main entry point."""
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv:
-        argv = ["menu"]
-
     settings = get_settings()
     setup_logging(level=settings.log_level, log_dir=settings.state_dir)
+
+    if not argv:
+        argv = ["menu"] if has_required_runtime_config(settings) else ["setup"]
 
     parser = build_parser()
     args = parser.parse_args(argv)

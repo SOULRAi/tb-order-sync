@@ -45,3 +45,18 @@ class TaskResult(BaseModel):
         self.success = success
         if error_message:
             self.error_message = error_message
+
+
+class RunSummary(BaseModel):
+    """Summary of one manual or scheduled execution round."""
+
+    trigger: str = "manual"
+    success: bool = True
+    started_at: datetime = Field(default_factory=datetime.now)
+    finished_at: Optional[datetime] = None
+    task_count: int = 0
+    rows_read: int = 0
+    rows_changed: int = 0
+    rows_error: int = 0
+    tasks: list[TaskResult] = Field(default_factory=list)
+    message: Optional[str] = None

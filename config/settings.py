@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     write_batch_size: int = 100
     retry_times: int = 3
     dry_run: bool = False
-    enable_style_update: bool = False
+    enable_style_update: bool = True
 
     # ── 列映射（可覆盖） ─────────────────────────────────
     a_col_product_price: str = "C"
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     b_col_order_no: str = "A"
 
     # ── 业务文案 ──────────────────────────────────────────
-    refund_status_text: str = "进入退款流程"
+    refund_status_text: str = "已退款"
     data_error_text: str = "数据异常"
 
 

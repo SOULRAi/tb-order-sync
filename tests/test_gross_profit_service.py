@@ -99,6 +99,29 @@ class TestGrossProfitCalculation:
         result = svc.run(mode=SyncMode.FULL)
         assert result.rows_error == 1
 
+    def test_cde_all_blank_keeps_g_empty(self):
+        rows = [
+            ["img", "addr", "", "", "", "", "", "SF003A", ""],
+        ]
+        svc, conn, _ = _make_service(rows)
+        result = svc.run(mode=SyncMode.FULL)
+
+        assert result.rows_error == 0
+        assert result.rows_changed == 0
+        conn.batch_update.assert_not_called()
+
+    def test_cde_all_blank_clears_existing_g(self):
+        rows = [
+            ["img", "addr", "", "", "", "", "数据异常", "SF003B", ""],
+        ]
+        svc, conn, _ = _make_service(rows)
+        result = svc.run(mode=SyncMode.FULL)
+
+        assert result.rows_error == 0
+        assert result.rows_changed == 1
+        updates = conn.batch_update.call_args[0][2]
+        assert updates[0].value == ""
+
     def test_string_numbers(self):
         """String numbers should be parsed correctly."""
         rows = [
@@ -108,6 +131,18 @@ class TestGrossProfitCalculation:
         result = svc.run(mode=SyncMode.FULL)
         assert result.rows_error == 0
         updates = conn.batch_update.call_args[0][2]
+        assert updates[0].value == 730.0
+
+    def test_writes_correct_row_and_column(self):
+        rows = [
+            ["img", "addr", "200", "20", "50", "1000", "", "SF004A", ""],
+        ]
+        svc, conn, _ = _make_service(rows)
+        svc.run(mode=SyncMode.FULL)
+
+        updates = conn.batch_update.call_args[0][2]
+        assert updates[0].row == 1
+        assert updates[0].col == 6
         assert updates[0].value == 730.0
 
     def test_no_change_skips_write(self):

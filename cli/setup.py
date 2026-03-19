@@ -15,6 +15,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
+from urllib.parse import parse_qs, urlparse
 
 try:
     from rich.console import Console
@@ -47,6 +48,7 @@ ENV_EXAMPLE_PATH = PROJECT_ROOT / ".env.example"
 
 # Column letter validator
 _COL_RE = re.compile(r"^[A-Z]{1,3}$")
+_TENCENT_FILE_RE = re.compile(r"/(?:sheet|doc|slide|mind|form|pdf)/([^/?#]+)")
 
 TENCENT_DOCS_GUIDE_URL = "https://docs.qq.com/open/document/app/"
 TENCENT_DEVELOPER_CONSOLE_URL = "https://docs.qq.com/open/developers/"
@@ -96,6 +98,28 @@ def _mask_secret(value: str) -> str:
     if len(value) <= 6:
         return "****"
     return value[:4] + "****"
+
+
+def parse_tencent_sheet_reference(raw: str) -> tuple[str, str]:
+    """Parse a Tencent Docs sheet URL or raw file id.
+
+    Returns `(file_id, sheet_id)` where `sheet_id` may be empty.
+    """
+    value = raw.strip()
+    if not value:
+        return "", ""
+
+    if not value.startswith(("http://", "https://")):
+        return value, ""
+
+    parsed = urlparse(value)
+    match = _TENCENT_FILE_RE.search(parsed.path)
+    if not match:
+        return "", ""
+
+    file_id = match.group(1).strip()
+    sheet_id = parse_qs(parsed.query).get("tab", [""])[0].strip()
+    return file_id, sheet_id
 
 
 # ── Setup Wizard ───────────────────────────────────────────────────────────
@@ -265,8 +289,7 @@ class SetupWizard:
             error_msg="Client ID 不能为空",
         )
         self.values["TENCENT_CLIENT_SECRET"] = self._prompt(
-            "Client Secret", "TENCENT_CLIENT_SECRET", secret=True, validator=_not_empty,
-            error_msg="Client Secret 不能为空",
+            "Client Secret（当前运行可留空）", "TENCENT_CLIENT_SECRET", secret=True,
         )
         self.values["TENCENT_OPEN_ID"] = self._prompt(
             "Open ID（可选，部分接口需要）", "TENCENT_OPEN_ID", secret=True,
@@ -278,29 +301,33 @@ class SetupWizard:
 
     def _step_sheet_ids(self) -> None:
         self.console.print(f"\n[bold cyan]📊 {STEP_SHEETS}[/bold cyan]")
-        self.console.print("  从腾讯文档链接中提取 File ID 和 Sheet ID\n")
+        self.console.print("  可直接粘贴腾讯文档完整链接，系统会自动拆出 File ID / Sheet ID\n")
         self._show_sheet_id_guide()
         self.console.print("")
 
-        self.console.print("  [bold]A 表（订单表）[/bold]")
-        self.values["TENCENT_A_FILE_ID"] = self._prompt(
-            "A 表 File ID", "TENCENT_A_FILE_ID", validator=_not_empty,
-            error_msg="File ID 不能为空",
-        )
-        self.values["TENCENT_A_SHEET_ID"] = self._prompt(
-            "A 表 Sheet ID", "TENCENT_A_SHEET_ID", validator=_not_empty,
-            error_msg="Sheet ID 不能为空",
-        )
+        def prompt_sheet_target(name: str, file_key: str, sheet_key: str) -> None:
+            while True:
+                self.console.print(f"  [bold]{name}[/bold]")
+                ref = self._prompt(
+                    f"{name}链接或 File ID", file_key, validator=_not_empty,
+                    error_msg="请输入腾讯文档链接或 File ID",
+                )
+                file_id, sheet_id = parse_tencent_sheet_reference(ref)
+                if not file_id:
+                    self.console.print("  [red]无法从链接中解析 File ID，请重新输入完整链接或直接填 File ID[/red]\n")
+                    continue
+                self.values[file_key] = file_id
+                if sheet_id:
+                    self.console.print(f"  [green]已自动解析 {name} Sheet ID: {sheet_id}[/green]")
+                self.values[sheet_key] = self._prompt(
+                    f"{name} Sheet ID", sheet_key, default=sheet_id, validator=_not_empty,
+                    error_msg="Sheet ID 不能为空",
+                )
+                break
 
-        self.console.print("\n  [bold]B 表（退款表）[/bold]")
-        self.values["TENCENT_B_FILE_ID"] = self._prompt(
-            "B 表 File ID", "TENCENT_B_FILE_ID", validator=_not_empty,
-            error_msg="File ID 不能为空",
-        )
-        self.values["TENCENT_B_SHEET_ID"] = self._prompt(
-            "B 表 Sheet ID", "TENCENT_B_SHEET_ID", validator=_not_empty,
-            error_msg="Sheet ID 不能为空",
-        )
+        prompt_sheet_target("A 表（订单表）", "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID")
+        self.console.print("")
+        prompt_sheet_target("B 表（退款表）", "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID")
 
     def _step_feishu_creds(self) -> None:
         self.console.print(f"\n[bold cyan]🐦 {STEP_FEISHU}[/bold cyan]")
@@ -372,7 +399,7 @@ class SetupWizard:
             validator=_is_bool_str, error_msg="请输入 true 或 false",
         )
         self.values["ENABLE_STYLE_UPDATE"] = self._prompt(
-            "是否启用行样式更新 (true / false)", "ENABLE_STYLE_UPDATE", default="false",
+            "是否启用行样式更新 (true / false)", "ENABLE_STYLE_UPDATE", default="true",
             validator=_is_bool_str, error_msg="请输入 true 或 false",
         )
 
@@ -414,7 +441,7 @@ class SetupWizard:
 
         # Business text
         self.values["REFUND_STATUS_TEXT"] = self._prompt(
-            "退款状态文案", "REFUND_STATUS_TEXT", default="进入退款流程",
+            "退款状态文案", "REFUND_STATUS_TEXT", default="已退款",
         )
         self.values["DATA_ERROR_TEXT"] = self._prompt(
             "数据异常文案", "DATA_ERROR_TEXT", default="数据异常",
@@ -520,9 +547,20 @@ class SetupWizard:
     # ── Connection test ────────────────────────────────────────────────────
 
     def _test_connection(self) -> bool:
-        """Try reading 1 row from A table to verify credentials."""
+        """Try reading both A/B sheets to verify credentials and document access."""
         self.console.print(f"\n[bold cyan]🔌 {STEP_TEST}[/bold cyan]")
-        self.console.print("  正在尝试读取 A 表第一行...\n")
+        self.console.print("  正在执行启动自检：状态目录 + 腾讯文档 A/B 表读取...\n")
+
+        state_dir = Path(self.values.get("STATE_DIR", "state"))
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+            probe = state_dir / ".write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            self.console.print(f"  [bold green]✅ 状态目录可写: {state_dir}[/bold green]")
+        except Exception as exc:
+            self.console.print(f"  [bold red]❌ 状态目录不可写: {state_dir} ({exc})[/bold red]")
+            return False
 
         try:
             from connectors.tencent_docs import TencentDocsConnector
@@ -533,19 +571,32 @@ class SetupWizard:
                 access_token=self.values.get("TENCENT_ACCESS_TOKEN", ""),
                 open_id=self.values.get("TENCENT_OPEN_ID", ""),
             )
-            rows = conn.read_rows(
+            a_rows = conn.read_rows(
                 self.values.get("TENCENT_A_FILE_ID", ""),
                 self.values.get("TENCENT_A_SHEET_ID", ""),
                 start_row=0,
                 end_row=2,
             )
-            self.console.print(f"  [bold green]✅ 连接成功！读取到 {len(rows)} 行数据[/bold green]")
-            if rows:
-                self.console.print(f"  表头: {rows[0][:5]}...")
+            b_rows = conn.read_rows(
+                self.values.get("TENCENT_B_FILE_ID", ""),
+                self.values.get("TENCENT_B_SHEET_ID", ""),
+                start_row=0,
+                end_row=2,
+            )
+            self.console.print(f"  [bold green]✅ A 表可读：{len(a_rows)} 行[/bold green]")
+            self.console.print(f"  [bold green]✅ B 表可读：{len(b_rows)} 行[/bold green]")
+            if a_rows:
+                self.console.print(f"  A 表表头: {a_rows[0][:5]}...")
+            if b_rows:
+                self.console.print(f"  B 表表头: {b_rows[0][:5]}...")
+            self.console.print("  [bold green]✅ 启动自检通过，可直接运行任务[/bold green]")
             return True
         except Exception as exc:
             self.console.print(f"  [bold red]❌ 连接失败: {exc}[/bold red]")
-            self.console.print("  [dim]请检查凭证和网络，稍后可重新运行 setup[/dim]")
+            if "400007" in str(exc) or "Requests Over Limit" in str(exc):
+                self.console.print("  [dim]当前更像是腾讯文档接口限流，请稍等后重新运行 tb check。[/dim]")
+            else:
+                self.console.print("  [dim]请检查 Access Token、Open ID、表格 ID、文档权限和网络，稍后可重新运行 setup/check[/dim]")
             return False
 
     # ── Check mode ─────────────────────────────────────────────────────────
@@ -567,8 +618,8 @@ class SetupWizard:
 
         required = {
             "TENCENT_CLIENT_ID": "腾讯文档 Client ID",
-            "TENCENT_CLIENT_SECRET": "腾讯文档 Client Secret",
             "TENCENT_ACCESS_TOKEN": "腾讯文档 Access Token",
+            "TENCENT_OPEN_ID": "腾讯文档 Open ID",
             "TENCENT_A_FILE_ID": "A 表 File ID",
             "TENCENT_A_SHEET_ID": "A 表 Sheet ID",
             "TENCENT_B_FILE_ID": "B 表 File ID",
@@ -576,7 +627,7 @@ class SetupWizard:
         }
 
         optional = {
-            "TENCENT_OPEN_ID": "腾讯文档 Open ID",
+            "TENCENT_CLIENT_SECRET": "腾讯文档 Client Secret",
             "FEISHU_APP_ID": "飞书 App ID",
             "FEISHU_APP_SECRET": "飞书 App Secret",
             "FEISHU_C_FILE_TOKEN": "飞书 C 表 Token",
@@ -628,7 +679,8 @@ class SetupWizard:
 
         if all_ok:
             self.console.print("\n[bold green]✅ 必填配置项均已设置[/bold green]")
-            if self._prompt_bool("是否测试连接？", default=True):
+            self.console.print("[dim]接下来会做一次启动自检：状态目录写入 + 腾讯文档 A/B 表读取[/dim]")
+            if self._prompt_bool("是否执行启动自检？", default=True):
                 self.values = dict(values)  # type: ignore
                 self._test_connection()
         else:
@@ -655,7 +707,7 @@ class SetupWizard:
             self._step_column_mapping()
 
             # Ensure business text defaults
-            self.values.setdefault("REFUND_STATUS_TEXT", "进入退款流程")
+            self.values.setdefault("REFUND_STATUS_TEXT", "已退款")
             self.values.setdefault("DATA_ERROR_TEXT", "数据异常")
 
             self._show_summary()

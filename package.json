@@ -1,7 +1,7 @@
 {
   "name": "tb-order-sync",
-  "version": "0.3.1",
-  "description": "Tencent Docs and Feishu order-sheet sync service with refund workflow, daemon scheduler, and tb CLI",
+  "version": "0.4.0",
+  "description": "Tencent Docs order sync service with gross-profit automation, refund marking, startup self-check, autostart daemon, and tb CLI",
   "bin": {
     "tb": "bin/tb.js"
   },
@@ -16,6 +16,7 @@
     "main.py",
     "requirements.txt",
     "README.md",
+    "快速开始.txt",
     "CHANGELOG.md",
     "LICENSE",
     ".env.example",
@@ -42,6 +43,8 @@
     "refund-workflow",
     "gross-profit",
     "daemon",
+    "autostart",
+    "self-check",
     "scheduler",
     "rich-cli",
     "tencent-docs",
