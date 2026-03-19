@@ -23,6 +23,7 @@ from services.state_service import StateService
 from utils.diff import row_fingerprint, set_hash
 from utils.logger import get_logger
 from utils.parser import normalize_order_no
+from utils.sheet_selector import ResolvedSheetTarget, resolve_latest_month_sheet
 
 logger = get_logger(__name__)
 
@@ -59,14 +60,16 @@ class RefundMatchService:
 
         try:
             state = self._state_svc.load()
+            a_target = self._resolve_a_target()
+            b_target = self._resolve_b_target()
 
             # 1. Build refund set from B table
-            refund_set = self._build_refund_set()
+            refund_set = self._build_refund_set(b_target.sheet_id)
             new_refund_hash = set_hash(list(refund_set))
             logger.info("B table refund set: %d order numbers, hash=%s", len(refund_set), new_refund_hash[:8])
 
             # 2. Read A table
-            a_rows = self._read_a_table()
+            a_rows = self._read_a_table(a_target.sheet_id)
             result.rows_read = len(a_rows)
             a_scan_hash = self._build_a_scan_hash(a_rows)
 
@@ -89,12 +92,12 @@ class RefundMatchService:
                 if updates:
                     self._conn.batch_update(
                         self._settings.tencent_a_file_id,
-                        self._settings.tencent_a_sheet_id,
+                        a_target.sheet_id,
                         updates,
                         batch_size=self._settings.write_batch_size,
                     )
                 if self._settings.enable_style_update and style_ops:
-                    self._apply_styles(style_ops)
+                    self._apply_styles(a_target.sheet_id, style_ops)
 
                 state.b_table_refund_hash = new_refund_hash
                 state.b_table_refund_set = sorted(refund_set)
@@ -117,10 +120,10 @@ class RefundMatchService:
 
     # ── Internal ───────────────────────────────────────────────────────────
 
-    def _build_refund_set(self) -> set[str]:
+    def _build_refund_set(self, sheet_id: str) -> set[str]:
         rows = self._conn.read_rows(
             self._settings.tencent_b_file_id,
-            self._settings.tencent_b_sheet_id,
+            sheet_id,
         )
         # Skip header
         data_rows = rows[1:] if rows else []
@@ -133,12 +136,42 @@ class RefundMatchService:
                 refund_set.add(order_no)
         return refund_set
 
-    def _read_a_table(self) -> list[list[Any]]:
+    def _read_a_table(self, sheet_id: str) -> list[list[Any]]:
         rows = self._conn.read_rows(
             self._settings.tencent_a_file_id,
-            self._settings.tencent_a_sheet_id,
+            sheet_id,
         )
         return rows[1:] if rows else []
+
+    def _resolve_a_target(self) -> ResolvedSheetTarget:
+        target = resolve_latest_month_sheet(
+            self._conn,  # type: ignore[arg-type]
+            file_id=self._settings.tencent_a_file_id,
+            fallback_sheet_id=self._settings.tencent_a_sheet_id,
+            title_keyword=self._settings.tencent_a_sheet_name_keyword,
+        )
+        if target.source != "fixed":
+            logger.info(
+                "退款匹配使用 A 表最新月份工作表: %s (%s)",
+                target.title or target.sheet_id,
+                target.sheet_id,
+            )
+        return target
+
+    def _resolve_b_target(self) -> ResolvedSheetTarget:
+        target = resolve_latest_month_sheet(
+            self._conn,  # type: ignore[arg-type]
+            file_id=self._settings.tencent_b_file_id,
+            fallback_sheet_id=self._settings.tencent_b_sheet_id,
+            title_keyword=self._settings.tencent_b_sheet_name_keyword,
+        )
+        if target.source != "fixed":
+            logger.info(
+                "退款匹配使用 B 表最新月份工作表: %s (%s)",
+                target.title or target.sheet_id,
+                target.sheet_id,
+            )
+        return target
 
     def _build_a_scan_hash(self, a_rows: list[list[Any]]) -> str:
         m = self._map
@@ -219,14 +252,14 @@ class RefundMatchService:
 
         return updates, style_ops, changed
 
-    def _apply_styles(self, ops: list[tuple[int, Optional[str]]]) -> None:
+    def _apply_styles(self, sheet_id: str, ops: list[tuple[int, Optional[str]]]) -> None:
         failures: list[str] = []
         total = len(ops)
         for index, (row_idx, color) in enumerate(ops):
             try:
                 self._conn.update_row_style(
                     self._settings.tencent_a_file_id,
-                    self._settings.tencent_a_sheet_id,
+                    sheet_id,
                     row_idx,
                     bg_color=color,
                 )

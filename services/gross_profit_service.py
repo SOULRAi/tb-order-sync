@@ -22,6 +22,7 @@ from services.state_service import StateService
 from utils.diff import row_fingerprint
 from utils.logger import get_logger
 from utils.parser import normalize_order_no, parse_number
+from utils.sheet_selector import ResolvedSheetTarget, resolve_latest_month_sheet
 
 logger = get_logger(__name__)
 
@@ -55,7 +56,8 @@ class GrossProfitService:
 
         try:
             state = self._state_svc.load()
-            rows = self._read_a_table()
+            a_target = self._resolve_a_target()
+            rows = self._read_a_table(a_target.sheet_id)
             result.rows_read = len(rows)
             if not rows:
                 logger.warning("A table returned 0 data rows")
@@ -69,7 +71,7 @@ class GrossProfitService:
             result.rows_error = errors
 
             if updates and not dry_run:
-                self._write_updates(updates)
+                self._write_updates(a_target.sheet_id, updates)
                 state.last_run_at = datetime.now()
                 self._state_svc.save(state)
 
@@ -89,13 +91,28 @@ class GrossProfitService:
 
     # ── Internal ───────────────────────────────────────────────────────────
 
-    def _read_a_table(self) -> list[list[Any]]:
+    def _read_a_table(self, sheet_id: str) -> list[list[Any]]:
         rows = self._conn.read_rows(
             self._settings.tencent_a_file_id,
-            self._settings.tencent_a_sheet_id,
+            sheet_id,
         )
         # Skip header (row 0)
         return rows[1:] if rows else []
+
+    def _resolve_a_target(self) -> ResolvedSheetTarget:
+        target = resolve_latest_month_sheet(
+            self._conn,  # type: ignore[arg-type]
+            file_id=self._settings.tencent_a_file_id,
+            fallback_sheet_id=self._settings.tencent_a_sheet_id,
+            title_keyword=self._settings.tencent_a_sheet_name_keyword,
+        )
+        if target.source != "fixed":
+            logger.info(
+                "A 表自动选择最新月份工作表: %s (%s)",
+                target.title or target.sheet_id,
+                target.sheet_id,
+            )
+        return target
 
     def _parse_rows(self, rows: list[list[Any]]) -> list[OrderRecord]:
         m = self._map
@@ -167,10 +184,10 @@ class GrossProfitService:
 
         return updates, changed, errors
 
-    def _write_updates(self, updates: list[CellUpdate]) -> None:
+    def _write_updates(self, sheet_id: str, updates: list[CellUpdate]) -> None:
         self._conn.batch_update(
             self._settings.tencent_a_file_id,
-            self._settings.tencent_a_sheet_id,
+            sheet_id,
             updates,
             batch_size=self._settings.write_batch_size,
         )

@@ -29,6 +29,7 @@ except ImportError:
 from dotenv import dotenv_values
 
 from config.settings import APP_HOME, PACKAGE_ROOT
+from utils.sheet_selector import resolve_latest_month_sheet
 
 # ── UI 文案 ────────────────────────────────────────────────────────────────
 BANNER_TITLE = "多表格同步服务 — 配置向导"
@@ -58,6 +59,14 @@ FEISHU_TOKEN_DOC_URL = (
     "authentication-management/access-token/tenant_access_token_internal"
 )
 FEISHU_TOKEN_TUTORIAL_URL = "https://www.feishu.cn/content/000214591773"
+_SETUP_LOGO = (
+    "[bold #8ecae6]████████╗██████╗     ██████╗ ██████╗ ██████╗ ███████╗██████╗[/bold #8ecae6]\n"
+    "[bold #38bdf8]╚══██╔══╝██╔══██╗   ██╔═══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗[/bold #38bdf8]\n"
+    "[bold #22d3ee]   ██║   ██████╔╝   ██║   ██║██████╔╝██║  ██║█████╗  ██████╔╝[/bold #22d3ee]\n"
+    "[bold #2dd4bf]   ██║   ██╔══██╗   ██║   ██║██╔══██╗██║  ██║██╔══╝  ██╔══██╗[/bold #2dd4bf]\n"
+    "[bold #86efac]   ██║   ██████╔╝   ╚██████╔╝██║  ██║██████╔╝███████╗██║  ██║[/bold #86efac]\n"
+    "[bold #bbf7d0]   ╚═╝   ╚═════╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝[/bold #bbf7d0]"
+)
 
 
 # ── Validators ─────────────────────────────────────────────────────────────
@@ -326,8 +335,18 @@ class SetupWizard:
                 break
 
         prompt_sheet_target("A 表（订单表）", "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID")
+        self.values["TENCENT_A_SHEET_NAME_KEYWORD"] = self._prompt(
+            "A 表按名称自动选最新月份（可选关键字，如 毛利率）",
+            "TENCENT_A_SHEET_NAME_KEYWORD",
+            default="",
+        )
         self.console.print("")
         prompt_sheet_target("B 表（退款表）", "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID")
+        self.values["TENCENT_B_SHEET_NAME_KEYWORD"] = self._prompt(
+            "B 表按名称自动选最新月份（可选关键字，如 客户退款）",
+            "TENCENT_B_SHEET_NAME_KEYWORD",
+            default="",
+        )
 
     def _step_feishu_creds(self) -> None:
         self.console.print(f"\n[bold cyan]🐦 {STEP_FEISHU}[/bold cyan]")
@@ -464,7 +483,9 @@ class SetupWizard:
             ]),
             ("表格 ID", [
                 "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID",
+                "TENCENT_A_SHEET_NAME_KEYWORD",
                 "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID",
+                "TENCENT_B_SHEET_NAME_KEYWORD",
             ]),
             ("飞书配置", [
                 "FEISHU_APP_ID", "FEISHU_APP_SECRET",
@@ -573,20 +594,36 @@ class SetupWizard:
                 access_token=self.values.get("TENCENT_ACCESS_TOKEN", ""),
                 open_id=self.values.get("TENCENT_OPEN_ID", ""),
             )
+            a_target = resolve_latest_month_sheet(
+                conn,
+                file_id=self.values.get("TENCENT_A_FILE_ID", ""),
+                fallback_sheet_id=self.values.get("TENCENT_A_SHEET_ID", ""),
+                title_keyword=self.values.get("TENCENT_A_SHEET_NAME_KEYWORD", ""),
+            )
+            b_target = resolve_latest_month_sheet(
+                conn,
+                file_id=self.values.get("TENCENT_B_FILE_ID", ""),
+                fallback_sheet_id=self.values.get("TENCENT_B_SHEET_ID", ""),
+                title_keyword=self.values.get("TENCENT_B_SHEET_NAME_KEYWORD", ""),
+            )
             a_rows = conn.read_rows(
                 self.values.get("TENCENT_A_FILE_ID", ""),
-                self.values.get("TENCENT_A_SHEET_ID", ""),
+                a_target.sheet_id,
                 start_row=0,
                 end_row=2,
             )
             b_rows = conn.read_rows(
                 self.values.get("TENCENT_B_FILE_ID", ""),
-                self.values.get("TENCENT_B_SHEET_ID", ""),
+                b_target.sheet_id,
                 start_row=0,
                 end_row=2,
             )
             self.console.print(f"  [bold green]✅ A 表可读：{len(a_rows)} 行[/bold green]")
             self.console.print(f"  [bold green]✅ B 表可读：{len(b_rows)} 行[/bold green]")
+            if a_target.source != "fixed":
+                self.console.print(f"  [bold green]✅ A 表自动选择：{a_target.title} ({a_target.sheet_id})[/bold green]")
+            if b_target.source != "fixed":
+                self.console.print(f"  [bold green]✅ B 表自动选择：{b_target.title} ({b_target.sheet_id})[/bold green]")
             if a_rows:
                 self.console.print(f"  A 表表头: {a_rows[0][:5]}...")
             if b_rows:
@@ -694,7 +731,7 @@ class SetupWizard:
         """Run the complete setup wizard."""
         try:
             self.console.print(Panel(
-                f"[bold]{BANNER_TITLE}[/bold]\n{BANNER_SUBTITLE}",
+                f"{_SETUP_LOGO}\n\n[bold]{BANNER_TITLE}[/bold]\n{BANNER_SUBTITLE}",
                 border_style="cyan",
                 padding=(1, 2),
             ))

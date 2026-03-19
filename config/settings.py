@@ -86,8 +86,10 @@ class Settings(BaseSettings):
     tencent_access_token: str = ""
     tencent_a_file_id: str = ""
     tencent_a_sheet_id: str = ""
+    tencent_a_sheet_name_keyword: str = ""
     tencent_b_file_id: str = ""
     tencent_b_sheet_id: str = ""
+    tencent_b_sheet_name_keyword: str = ""
 
     # ── 飞书（预留） ─────────────────────────────────────
     feishu_app_id: str = ""

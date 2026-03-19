@@ -10,6 +10,7 @@ from models.state_models import SyncState
 from services.refund_match_service import RefundMatchService
 from services.state_service import StateService
 from utils.diff import set_hash
+from utils.sheet_selector import SheetInfo
 
 
 def _make_mapping() -> ColumnMapping:
@@ -45,6 +46,7 @@ def _make_service(a_rows: list[list], b_rows: list[list], **overrides):
     connector.read_rows.side_effect = read_side_effect
     connector.batch_update = MagicMock()
     connector.update_row_style = MagicMock()
+    connector.list_sheets = MagicMock(return_value=[])
 
     state_svc = MagicMock(spec=StateService)
     state_svc.load.return_value = SyncState()
@@ -185,3 +187,32 @@ class TestRefundMatch:
 
         assert result.rows_changed == 0
         conn.batch_update.assert_not_called()
+
+    def test_uses_latest_month_sheets_when_keywords_are_configured(self):
+        a_rows = [
+            ["img", "addr", "200", "20", "50", "1000", "730", "SF001", ""],
+        ]
+        b_rows = [["SF001", "", "", "", "", "", "", "", "", "", "", ""]]
+        svc, conn, _ = _make_service(
+            a_rows,
+            b_rows,
+            tencent_a_sheet_name_keyword="毛利率",
+            tencent_b_sheet_name_keyword="客户退款",
+        )
+        conn.list_sheets.side_effect = [
+            [
+                SheetInfo(sheet_id="000001", title="3月毛利率", index=0),
+                SheetInfo(sheet_id="000002", title="4月毛利率", index=1),
+            ],
+            [
+                SheetInfo(sheet_id="000011", title="3月客户退款", index=0),
+                SheetInfo(sheet_id="000012", title="4月客户退款", index=1),
+            ],
+        ]
+
+        result = svc.run(mode=SyncMode.FULL)
+
+        assert result.rows_changed == 1
+        assert conn.read_rows.call_args_list[0].args[1] == "000012"
+        assert conn.read_rows.call_args_list[1].args[1] == "000002"
+        assert conn.batch_update.call_args[0][1] == "000002"

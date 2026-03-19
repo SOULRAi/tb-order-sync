@@ -327,8 +327,10 @@ TENCENT_OPEN_ID=your_open_id
 TENCENT_ACCESS_TOKEN=your_access_token
 TENCENT_A_FILE_ID=a_table_file_id
 TENCENT_A_SHEET_ID=a_table_sheet_id
+TENCENT_A_SHEET_NAME_KEYWORD=毛利率
 TENCENT_B_FILE_ID=b_table_file_id
 TENCENT_B_SHEET_ID=b_table_sheet_id
+TENCENT_B_SHEET_NAME_KEYWORD=客户退款
 
 # 运行模式
 GROSS_PROFIT_MODE=incremental    # incremental | full
@@ -350,6 +352,7 @@ B_COL_ORDER_NO=A
 
 补充说明：
 - `tb setup` 支持直接粘贴腾讯文档完整链接，自动拆出 `File ID / Sheet ID`
+- 如果填写 `TENCENT_A_SHEET_NAME_KEYWORD` / `TENCENT_B_SHEET_NAME_KEYWORD`，系统会在对应文件里自动选取标题中匹配关键字的“最新月份”工作表
 - `tb check` 会做启动自检，不只是看 `.env` 是否存在
 - 当前退款高亮效果是“整行红色文字”，不是背景填充
 

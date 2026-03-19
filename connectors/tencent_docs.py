@@ -21,6 +21,7 @@ from connectors.base import BaseSheetConnector, CellUpdate
 from config.mappings import col_index_to_letter
 from utils.logger import get_logger
 from utils.retry import default_retry
+from utils.sheet_selector import SheetInfo
 
 logger = get_logger(__name__)
 
@@ -183,6 +184,22 @@ class TencentDocsConnector(BaseSheetConnector):
         if rows:
             return [str(v) if v is not None else "" for v in rows[0]]
         return []
+
+    @default_retry(max_attempts=5)
+    def list_sheets(self, file_id: str) -> list[SheetInfo]:
+        """List spreadsheet tabs for a Tencent Docs file.
+
+        Uses the file metadata endpoint and extracts sheet IDs/titles defensively
+        because the exact response nesting can vary.
+        """
+        url = f"/openapi/spreadsheet/v3/files/{file_id}"
+        logger.info("Listing sheets for file=%s", file_id)
+        data = self._unwrap_response(self._http.get(url))
+        sheets = self._extract_sheet_infos(data)
+        if not sheets:
+            raise RuntimeError("Tencent Docs API returned no sheet metadata for this file")
+        logger.info("Found %d sheets for file=%s: %s", len(sheets), file_id, ", ".join(item.title for item in sheets))
+        return sheets
 
     @default_retry(max_attempts=5)
     def update_row_style(
@@ -361,3 +378,73 @@ class TencentDocsConnector(BaseSheetConnector):
             "blue": int(value[4:6], 16),
             "alpha": 255,
         }
+
+    @staticmethod
+    def _extract_sheet_infos(data: Any) -> list[SheetInfo]:
+        sheets: list[SheetInfo] = []
+        seen: set[str] = set()
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                sheet_id = TencentDocsConnector._extract_sheet_id(node)
+                title = TencentDocsConnector._extract_sheet_title(node)
+                if sheet_id and title and sheet_id not in seen:
+                    seen.add(sheet_id)
+                    sheets.append(
+                        SheetInfo(
+                            sheet_id=sheet_id,
+                            title=title,
+                            index=TencentDocsConnector._extract_sheet_index(node, default=len(sheets)),
+                        )
+                    )
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(data)
+        sheets.sort(key=lambda item: item.index)
+        return sheets
+
+    @staticmethod
+    def _extract_sheet_id(node: dict[str, Any]) -> str:
+        for key in ("sheetId", "sheetID", "sheet_id"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for key in ("sheetId", "sheetID", "sheet_id"):
+                value = props.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
+
+    @staticmethod
+    def _extract_sheet_title(node: dict[str, Any]) -> str:
+        for key in ("title", "name", "sheetName", "sheetTitle"):
+            value = node.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for key in ("title", "name", "sheetName", "sheetTitle"):
+                value = props.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return ""
+
+    @staticmethod
+    def _extract_sheet_index(node: dict[str, Any], *, default: int) -> int:
+        for key in ("index", "sheetIndex", "order"):
+            value = node.get(key)
+            if isinstance(value, int):
+                return value
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for key in ("index", "sheetIndex", "order"):
+                value = props.get(key)
+                if isinstance(value, int):
+                    return value
+        return default

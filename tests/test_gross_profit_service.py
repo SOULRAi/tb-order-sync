@@ -9,6 +9,7 @@ from connectors.base import BaseSheetConnector, CellUpdate
 from models.state_models import SyncState
 from services.gross_profit_service import GrossProfitService
 from services.state_service import StateService
+from utils.sheet_selector import SheetInfo
 
 
 def _make_settings(**overrides) -> Settings:
@@ -46,6 +47,7 @@ def _make_service(rows: list[list], **settings_overrides):
     header = ["产品图", "订单地址", "产品价格", "包装价格", "运费", "客户报价", "毛利", "单号", "退款状态"]
     connector.read_rows.return_value = [header] + rows
     connector.batch_update = MagicMock()
+    connector.list_sheets = MagicMock(return_value=[])
 
     state_svc = MagicMock(spec=StateService)
     state_svc.load.return_value = SyncState()
@@ -203,3 +205,24 @@ class TestGrossProfitIncremental:
 
         result = svc.run(mode=SyncMode.INCREMENTAL)
         assert result.rows_changed == 0
+
+
+class TestGrossProfitAutoSheetSelect:
+    def test_uses_latest_month_sheet_when_keyword_is_configured(self):
+        rows = [
+            ["img", "addr", "200", "20", "50", "1000", "", "SF012", ""],
+        ]
+        svc, conn, _ = _make_service(
+            rows,
+            tencent_a_sheet_id="fixed_sheet",
+            tencent_a_sheet_name_keyword="毛利率",
+        )
+        conn.list_sheets.return_value = [
+            SheetInfo(sheet_id="000001", title="3月毛利率", index=0),
+            SheetInfo(sheet_id="000002", title="4月毛利率", index=1),
+        ]
+
+        svc.run(mode=SyncMode.FULL)
+
+        assert conn.read_rows.call_args_list[0].args[1] == "000002"
+        assert conn.batch_update.call_args[0][1] == "000002"

@@ -18,6 +18,21 @@ from config.settings import Settings, get_settings
 from services.daemon_service import DaemonService
 from services.state_service import StateService
 
+_LOGO_LINES = [
+    ("████████╗██████╗      ██████╗ ██████╗ ██████╗ ███████╗██████╗", "bold #8ecae6"),
+    ("╚══██╔══╝██╔══██╗    ██╔═══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗", "bold #6ccff6"),
+    ("   ██║   ██████╔╝    ██║   ██║██████╔╝██║  ██║█████╗  ██████╔╝", "bold #38bdf8"),
+    ("   ██║   ██╔══██╗    ██║   ██║██╔══██╗██║  ██║██╔══╝  ██╔══██╗", "bold #22d3ee"),
+    ("   ██║   ██████╔╝    ╚██████╔╝██║  ██║██████╔╝███████╗██║  ██║", "bold #2dd4bf"),
+    ("   ╚═╝   ╚═════╝      ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝", "bold #86efac"),
+]
+_MODAL_ICONS = {
+    "success": ("●", "#10b981"),
+    "warning": ("●", "#f59e0b"),
+    "error": ("●", "#ef4444"),
+    "info": ("●", "#38bdf8"),
+}
+
 
 class DashboardApp:
     """Interactive terminal UI for daily operations."""
@@ -57,38 +72,35 @@ class DashboardApp:
         last_run = self._state_svc.load_last_run(quiet=True)
         autostart_status = self._daemon.autostart_status()
 
-        title = Text("多表格同步与退款标记服务", style="bold white")
-        subtitle = Text("Scheduler Console", style="bold #8ecae6")
-        header = Panel(
-            Align.center(Group(title, subtitle)),
-            border_style="#219ebc",
-            box=box.HEAVY,
-            padding=(1, 2),
-        )
+        header = self._build_header(daemon_status, last_run)
 
         runtime_panel = Panel(
             self._build_runtime_table(),
             title="[bold #023047]运行配置[/bold #023047]",
             border_style="#8ecae6",
             box=box.ROUNDED,
+            padding=(1, 2),
         )
         daemon_panel = Panel(
             self._build_daemon_table(daemon_status, autostart_status),
             title="[bold #023047]守护进程[/bold #023047]",
             border_style="#90be6d" if daemon_status.running else "#f4a261",
             box=box.ROUNDED,
+            padding=(1, 2),
         )
         state_panel = Panel(
             self._build_state_table(state, last_run),
             title="[bold #023047]同步状态[/bold #023047]",
             border_style="#ffb703",
             box=box.ROUNDED,
+            padding=(1, 2),
         )
         config_panel = Panel(
             self._build_config_table(),
             title="[bold #023047]接入状态[/bold #023047]",
             border_style="#fb8500" if self._is_config_ready() else "#d62828",
             box=box.ROUNDED,
+            padding=(1, 2),
         )
 
         actions = Panel(
@@ -96,6 +108,7 @@ class DashboardApp:
             title="[bold #023047]操作台[/bold #023047]",
             border_style="#219ebc",
             box=box.ROUNDED,
+            padding=(1, 2),
         )
 
         footer = Panel(
@@ -115,6 +128,53 @@ class DashboardApp:
             actions,
             footer,
         )
+
+    def _build_header(self, daemon_status, last_run) -> Panel:
+        logo = Text(justify="center")
+        for line, style in _LOGO_LINES:
+            logo.append(line, style=style)
+            logo.append("\n")
+        logo.append("Tencent Docs Order Sync Console", style="bold #e0fbfc")
+
+        badges = Table.grid(expand=True)
+        badges.add_column(justify="center")
+        badges.add_column(justify="center")
+        badges.add_column(justify="center")
+        badges.add_row(
+            self._build_badge("运行模式", f"{self._settings.gross_profit_mode.value} / {self._settings.refund_match_mode.value}", "#0ea5e9"),
+            self._build_badge("守护状态", "运行中" if daemon_status.running else "未运行", "#10b981" if daemon_status.running else "#f59e0b"),
+            self._build_badge("最近结果", self._last_run_label(last_run), "#22c55e" if last_run and last_run.success else "#ef4444" if last_run else "#64748b"),
+        )
+
+        subtitle = Text("多表格同步与退款标记服务", style="bold white", justify="center")
+        hint = Text("输入编号执行任务，所有结果与失败原因会在控制台内直接返回", style="dim", justify="center")
+
+        body = Group(
+            Align.center(logo),
+            Align.center(subtitle),
+            Align.center(hint),
+            badges,
+        )
+        return Panel(
+            body,
+            border_style="#219ebc",
+            box=box.HEAVY,
+            padding=(1, 2),
+        )
+
+    @staticmethod
+    def _build_badge(label: str, value: str, color: str) -> Panel:
+        inner = Table.grid(padding=(0, 1))
+        inner.add_column(justify="center")
+        inner.add_row(Text(label, style="bold white"))
+        inner.add_row(Text(value, style="bold white"))
+        return Panel(inner, border_style=color, box=box.ROUNDED, padding=(0, 1))
+
+    @staticmethod
+    def _last_run_label(last_run) -> str:
+        if last_run is None:
+            return "暂无记录"
+        return "成功" if last_run.success else "失败"
 
     def _build_runtime_table(self) -> Table:
         table = Table(box=None, show_header=False, pad_edge=False)
@@ -168,9 +228,9 @@ class DashboardApp:
         return table
 
     def _build_action_table(self) -> Table:
-        table = Table(box=box.SIMPLE_HEAVY, expand=True)
-        table.add_column("编号", justify="center", style="bold #219ebc", width=6)
-        table.add_column("动作", style="bold white")
+        table = Table(box=box.SIMPLE_HEAVY, expand=True, row_styles=["none", "dim"])
+        table.add_column("编号", justify="center", style="bold #38bdf8", width=6)
+        table.add_column("动作", style="bold white", width=18)
         table.add_column("说明", style="#023047")
         table.add_row("1", "执行全部任务", "毛利计算 + 退款匹配")
         table.add_row("2", "模拟执行", "全部任务 dry-run，不写入表格")
@@ -228,7 +288,7 @@ class DashboardApp:
         from cli.commands import execute_tasks
 
         results = execute_tasks(self._settings, task, dry_run=dry_run)
-        table = Table(box=box.SIMPLE_HEAVY, expand=True)
+        table = Table(box=box.SIMPLE_HEAVY, expand=True, row_styles=["none", "dim"])
         table.add_column("任务", style="bold cyan")
         table.add_column("结果", justify="center")
         table.add_column("读取", justify="right")
@@ -251,8 +311,19 @@ class DashboardApp:
             failure_table.add_column("失败原因", style="white")
             for item in failures:
                 failure_table.add_row(item.task_name.value, item.error_message or "")
-            body = Group(table, Panel(failure_table, title="失败详情", border_style="red", box=box.ROUNDED))
-        self._pause_with_panel(Panel(body, title="执行结果", border_style="#219ebc", box=box.ROUNDED))
+            body = Group(
+                self._build_modal_summary("执行完成，但存在失败项", style="error"),
+                table,
+                Panel(failure_table, title="失败详情", border_style="red", box=box.ROUNDED, padding=(1, 2)),
+            )
+            self._pause_with_panel(body, title="执行结果", border_style="#ef4444")
+            return
+
+        body = Group(
+            self._build_modal_summary("执行完成，结果已落地", style="success"),
+            table,
+        )
+        self._pause_with_panel(body, title="执行结果", border_style="#219ebc")
 
     def _daemon_action(self, action: str) -> None:
         if action in {"start", "autostart-enable"} and not self._ensure_config():
@@ -271,14 +342,47 @@ class DashboardApp:
         else:
             status = self._daemon.autostart_status()
 
-        self._pause_with_panel(Panel(status.message, title="守护结果", border_style="#90be6d", box=box.ROUNDED))
+        style = "success"
+        border = "#90be6d"
+        if "失败" in status.message or "未找到" in status.message:
+            style = "error"
+            border = "#ef4444"
+        elif "未启用" in status.message or "未运行" in status.message:
+            style = "warning"
+            border = "#f59e0b"
+
+        body = Group(
+            self._build_modal_summary(status.message, style=style),
+            self._build_kv_table({
+                "动作": action,
+                "目标": getattr(status, "target", "") or "-",
+            }),
+        )
+        self._pause_with_panel(body, title="守护结果", border_style=border)
 
     def _show_log_tail(self) -> None:
         content = self._daemon.read_log_tail(lines=40)
-        body = content if content else "后台日志暂时为空。"
-        self._pause_with_panel(
-            Panel(body, title=f"后台日志 · {self._daemon.log_file.name}", border_style="#ffb703", box=box.ROUNDED)
-        )
+        if content:
+            log_panel = Panel(
+                Text(content, style="#e5e7eb"),
+                title=f"后台日志 · {self._daemon.log_file.name}",
+                border_style="#ffb703",
+                box=box.ROUNDED,
+                padding=(1, 2),
+            )
+            body = Group(
+                self._build_modal_summary("以下为最近 40 行后台日志", style="info"),
+                log_panel,
+            )
+        else:
+            body = Group(
+                self._build_modal_summary("后台日志暂时为空", style="warning"),
+                self._build_kv_table({
+                    "日志文件": self._daemon.log_file.name,
+                    "日志目录": str(self._daemon.log_file.parent),
+                }),
+            )
+        self._pause_with_panel(body, title="后台日志", border_style="#ffb703")
 
     def _run_setup(self, *, check: bool) -> None:
         from cli.setup import cmd_setup
@@ -300,14 +404,14 @@ class DashboardApp:
     def _ensure_config(self) -> bool:
         if self._is_config_ready():
             return True
-        self._pause_with_panel(
-            Panel(
-                "腾讯文档必填配置尚未完成，请先运行配置向导。",
-                title="配置未完成",
-                border_style="red",
-                box=box.ROUNDED,
-            )
+        body = Group(
+            self._build_modal_summary("腾讯文档必填配置尚未完成", style="error"),
+            self._build_kv_table({
+                "建议动作": "先运行 tb setup",
+                "后续检查": "配置完成后运行 tb check",
+            }),
         )
+        self._pause_with_panel(body, title="配置未完成", border_style="#ef4444")
         return False
 
     def _is_config_ready(self) -> bool:
@@ -322,10 +426,34 @@ class DashboardApp:
         ]
         return all(bool(value.strip()) for value in fields)
 
-    def _pause_with_panel(self, panel: Panel) -> None:
+    def _pause_with_panel(self, body, *, title: str, border_style: str) -> None:
         self.console.clear()
-        self.console.print(panel)
+        self.console.print(
+            Panel(
+                body,
+                title=title,
+                border_style=border_style,
+                box=box.ROUNDED,
+                padding=(1, 2),
+            )
+        )
         self._wait()
+
+    def _build_modal_summary(self, message: str, *, style: str) -> Panel:
+        icon, color = _MODAL_ICONS[style]
+        text = Text(justify="center")
+        text.append(f"{icon} ", style=f"bold {color}")
+        text.append(message, style="bold white")
+        return Panel(text, border_style=color, box=box.ROUNDED, padding=(0, 1))
+
+    @staticmethod
+    def _build_kv_table(rows: dict[str, str]) -> Table:
+        table = Table(box=box.SIMPLE_HEAVY, expand=True, row_styles=["none", "dim"])
+        table.add_column("项目", style="bold cyan", width=18)
+        table.add_column("内容", style="white")
+        for key, value in rows.items():
+            table.add_row(key, value)
+        return table
 
     def _wait(self) -> None:
         self.console.input("[dim]按回车返回控制台[/dim]")
