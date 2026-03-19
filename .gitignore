@@ -11,5 +11,6 @@ dist/
 state/
 python_embed/
 node_modules/
+.npm-cache/
 *.log
 *.tgz
