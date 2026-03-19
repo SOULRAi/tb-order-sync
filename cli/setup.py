@@ -174,6 +174,15 @@ class SetupWizard:
 
     # ── Prompt helpers ─────────────────────────────────────────────────────
 
+    @staticmethod
+    def _read_line(prompt: str = "  > ") -> str:
+        """Read one input line using the plain stdlib input path.
+
+        This is intentionally not using `Console.input`, because the Windows
+        packaged runtime is more stable with the built-in `input()` behavior.
+        """
+        return input(prompt).strip()
+
     def _prompt(
         self,
         label: str,
@@ -197,7 +206,7 @@ class SetupWizard:
                 note += " [dim]输入 /skip 暂时跳过[/dim]"
 
             self.console.print(f"  {label}{hint}{note}")
-            raw = self.console.input("  > ").strip()
+            raw = self._read_line()
 
             if allow_skip and raw.lower() == "/skip":
                 self.console.print("  [yellow]已暂时跳过，可稍后重新运行 setup 补充[/yellow]")
@@ -215,7 +224,7 @@ class SetupWizard:
     def _prompt_bool(self, label: str, default: bool = False) -> bool:
         hint = "Y/n" if default else "y/N"
         self.console.print(f"  {label} [{hint}]")
-        raw = input("  > ").strip().lower()
+        raw = self._read_line().lower()
         if not raw:
             return default
         return raw in ("y", "yes", "是")
@@ -231,7 +240,7 @@ class SetupWizard:
         self.console.print("  [dim]输入编号：0=暂时跳过，1=打开全部，2..N=打开单个链接[/dim]")
 
         while True:
-            raw = self.console.input("  > ").strip()
+            raw = self._read_line()
             try:
                 indexes = resolve_link_selection(raw, len(links))
             except ValueError as exc:
@@ -273,7 +282,16 @@ class SetupWizard:
                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             if os.name == "nt":
-                os.startfile(url)  # type: ignore[attr-defined]
+                try:
+                    os.startfile(url)  # type: ignore[attr-defined]
+                    return True
+                except Exception:
+                    pass
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "", url],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
                 return True
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
