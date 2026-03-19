@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-03-19
+
+### Added
+
+- Added standard GitHub Release packaging workflow for macOS and Windows.
+- Added complete distribution package output including startup scripts, `.env.example`, `快速开始.txt`, and `公司同事使用说明.md`.
+
+### Changed
+
+- Changed release packaging to produce platform-specific archives:
+  - `tb-order-sync-macos-x64-<version>.zip`
+  - `tb-order-sync-windows-x64-<version>.zip`
+
 ## [0.4.0] - 2026-03-19
 
 ### Added

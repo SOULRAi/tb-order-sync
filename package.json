@@ -1,6 +1,6 @@
 {
   "name": "tb-order-sync",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Tencent Docs order sync service with gross-profit automation, refund marking, startup self-check, autostart daemon, and tb CLI",
   "bin": {
     "tb": "bin/tb.js"

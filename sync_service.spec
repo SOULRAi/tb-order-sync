@@ -23,6 +23,7 @@ a = Analysis(
         # Bundle .env.example so first-run setup can use it as template
         (str(root / '.env.example'), '.'),
         (str(root / '快速开始.txt'), '.'),
+        (str(root / '公司同事使用说明.md'), '.'),
     ],
     hiddenimports=[
         'config',

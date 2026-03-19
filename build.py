@@ -22,6 +22,7 @@ DIST_RUNTIME_FILES = [
     "启动.bat",
     "启动.command",
     "快速开始.txt",
+    "公司同事使用说明.md",
 ]
 
 

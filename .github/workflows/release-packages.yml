@@ -1,0 +1,68 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build ${{ matrix.label }} Package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            label: macOS
+            asset_prefix: tb-order-sync-macos-x64
+          - os: windows-latest
+            label: Windows
+            asset_prefix: tb-order-sync-windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build Executable
+        run: python build.py --clean
+
+      - name: Prepare macOS Package
+        if: runner.os == 'macOS'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_DIR="release/${{ matrix.asset_prefix }}-${VERSION}"
+          mkdir -p "$PACKAGE_DIR"
+          cp -R dist/sync_service/. "$PACKAGE_DIR/"
+          rm -f "$PACKAGE_DIR/启动.bat"
+          chmod +x "$PACKAGE_DIR/sync_service" "$PACKAGE_DIR/启动.command"
+          ditto -c -k --sequesterRsrc --keepParent "$PACKAGE_DIR" "release/${{ matrix.asset_prefix }}-${VERSION}.zip"
+
+      - name: Prepare Windows Package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $packageDir = "release/${{ matrix.asset_prefix }}-$version"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item dist/sync_service/* $packageDir -Recurse -Force
+          Remove-Item "$packageDir/启动.command" -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path $packageDir -DestinationPath "release/${{ matrix.asset_prefix }}-$version.zip" -Force
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip

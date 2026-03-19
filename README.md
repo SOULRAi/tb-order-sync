@@ -67,6 +67,10 @@ tb daemon status
 | Python 兼容入口 | 调试或源码环境 | `python main.py` |
 | 打包分发 | 免安装交付 | `dist/sync_service/` |
 
+GitHub Release 现已提供标准完整分发包：
+- Windows: `tb-order-sync-windows-x64-<version>.zip`
+- macOS: `tb-order-sync-macos-x64-<version>.zip`
+
 ### 常用命令速查
 
 ```bash
