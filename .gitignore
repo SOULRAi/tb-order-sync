@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.env.backup.*
+.pytest_cache/
+.venv/
+.deps/
+__pycache__/
+*.pyc
+build/
+dist/
+state/
+python_embed/
+node_modules/
+*.log
+*.tgz

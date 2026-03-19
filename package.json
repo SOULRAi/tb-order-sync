@@ -1,0 +1,40 @@
+{
+  "name": "tb-sync-service",
+  "version": "0.3.0",
+  "description": "Launcher package for the multi-sheet sync and refund marking service",
+  "bin": {
+    "tb": "bin/tb.js"
+  },
+  "files": [
+    "bin/",
+    "cli/**/*.py",
+    "config/**/*.py",
+    "connectors/**/*.py",
+    "models/**/*.py",
+    "services/**/*.py",
+    "utils/**/*.py",
+    "main.py",
+    "requirements.txt",
+    "README.md",
+    "CHANGELOG.md",
+    ".env.example",
+    "build.py",
+    "sync_service.spec",
+    "启动.bat",
+    "启动.command"
+  ],
+  "scripts": {
+    "tb": "node bin/tb.js",
+    "check": "node bin/tb.js check",
+    "pack:local": "npm pack"
+  },
+  "keywords": [
+    "python",
+    "scheduler",
+    "daemon",
+    "rich-cli",
+    "tencent-docs",
+    "feishu"
+  ],
+  "license": "MIT"
+}
