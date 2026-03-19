@@ -7,9 +7,10 @@ Usage:
 
 from __future__ import annotations
 
-import getpass
+import os
 import re
 import shutil
+import subprocess
 import sys
 import webbrowser
 from datetime import datetime
@@ -109,6 +110,33 @@ def _mask_secret(value: str) -> str:
     return value[:4] + "****"
 
 
+def resolve_link_selection(raw: str, link_count: int) -> list[int]:
+    """Resolve numeric selection for link-opening prompts.
+
+    Rules:
+    - 0 / empty => skip
+    - 1 => open all
+    - 2..N+1 => open one specific link
+    """
+    value = raw.strip()
+    if not value:
+        return []
+    try:
+        choice = int(value)
+    except ValueError as exc:
+        raise ValueError("请输入数字编号") from exc
+
+    if choice == 0:
+        return []
+    if choice == 1:
+        return list(range(link_count))
+
+    index = choice - 2
+    if 0 <= index < link_count:
+        return [index]
+    raise ValueError("编号超出范围")
+
+
 def parse_tencent_sheet_reference(raw: str) -> tuple[str, str]:
     """Parse a Tencent Docs sheet URL or raw file id.
 
@@ -154,24 +182,29 @@ class SetupWizard:
         secret: bool = False,
         validator: Optional[Callable[[str], bool]] = None,
         error_msg: str = "输入无效，请重新输入",
+        allow_skip: bool = False,
     ) -> str:
         """Prompt user for a value with optional validation and masking."""
         existing = self._existing.get(key, "")
         effective_default = existing or default
 
         while True:
-            if secret:
-                hint = f" [当前: {_mask_secret(effective_default)}]" if effective_default else ""
-                self.console.print(f"  {label}{hint}")
-                raw = getpass.getpass("  > ")
-                if not raw and effective_default:
-                    raw = effective_default
-            else:
-                hint = f" [默认: {effective_default}]" if effective_default else ""
-                self.console.print(f"  {label}{hint}")
-                raw = input("  > ").strip()
-                if not raw and effective_default:
-                    raw = effective_default
+            hint_value = _mask_secret(effective_default) if secret and effective_default else effective_default
+            hint_label = "当前" if secret else "默认"
+            hint = f" [{hint_label}: {hint_value}]" if hint_value else ""
+            note = " [dim]可直接粘贴[/dim]"
+            if allow_skip:
+                note += " [dim]输入 /skip 暂时跳过[/dim]"
+
+            self.console.print(f"  {label}{hint}{note}")
+            raw = self.console.input("  > ").strip()
+
+            if allow_skip and raw.lower() == "/skip":
+                self.console.print("  [yellow]已暂时跳过，可稍后重新运行 setup 补充[/yellow]")
+                return ""
+
+            if not raw and effective_default:
+                raw = effective_default
 
             if validator and not validator(raw):
                 self.console.print(f"  [red]{error_msg}[/red]")
@@ -195,24 +228,57 @@ class SetupWizard:
         self.console.print(f"  [dim]{title}：[/dim]")
         for idx, (label, url) in enumerate(links, start=1):
             self.console.print(f"    {idx}. {label}: [cyan]{url}[/cyan]")
+        self.console.print("  [dim]输入编号：0=暂时跳过，1=打开全部，2..N=打开单个链接[/dim]")
 
-        if not self._prompt_bool("是否现在用浏览器打开这些链接？", default=False):
+        while True:
+            raw = self.console.input("  > ").strip()
+            try:
+                indexes = resolve_link_selection(raw, len(links))
+            except ValueError as exc:
+                self.console.print(f"  [red]{exc}[/red]")
+                continue
+            break
+
+        if not indexes:
+            self.console.print("  [dim]已跳过打开链接[/dim]")
             return
 
         opened = 0
-        for _, url in links:
+        for index in indexes:
+            label, url = links[index]
             try:
-                if webbrowser.open_new_tab(url):
+                if self._open_url(url):
                     opened += 1
-            except webbrowser.Error as exc:
-                self.console.print(f"  [yellow]打开失败: {url} ({exc})[/yellow]")
+                else:
+                    self.console.print(f"  [yellow]未能打开: {label} - {url}[/yellow]")
             except Exception as exc:  # pragma: no cover - defensive guard
-                self.console.print(f"  [yellow]打开失败: {url} ({exc})[/yellow]")
+                self.console.print(f"  [yellow]打开失败: {label} - {url} ({exc})[/yellow]")
 
         if opened:
             self.console.print(f"  [green]已尝试打开 {opened} 个链接[/green]")
         else:
             self.console.print("  [yellow]未能自动打开浏览器，请手动复制上面的链接[/yellow]")
+
+    @staticmethod
+    def _open_url(url: str) -> bool:
+        """Open a URL in the default browser with platform fallbacks."""
+        try:
+            if webbrowser.open_new_tab(url):
+                return True
+        except webbrowser.Error:
+            pass
+
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            if os.name == "nt":
+                os.startfile(url)  # type: ignore[attr-defined]
+                return True
+            subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except Exception:
+            return False
 
     def _show_tencent_guide(self) -> None:
         """Display beginner guidance for Tencent Docs Open API setup."""
@@ -296,16 +362,20 @@ class SetupWizard:
         self.values["TENCENT_CLIENT_ID"] = self._prompt(
             "Client ID", "TENCENT_CLIENT_ID", secret=True, validator=_not_empty,
             error_msg="Client ID 不能为空",
+            allow_skip=True,
         )
         self.values["TENCENT_CLIENT_SECRET"] = self._prompt(
             "Client Secret（当前运行可留空）", "TENCENT_CLIENT_SECRET", secret=True,
+            allow_skip=True,
         )
         self.values["TENCENT_OPEN_ID"] = self._prompt(
             "Open ID（可选，部分接口需要）", "TENCENT_OPEN_ID", secret=True,
+            allow_skip=True,
         )
         self.values["TENCENT_ACCESS_TOKEN"] = self._prompt(
             "Access Token", "TENCENT_ACCESS_TOKEN", secret=True, validator=_not_empty,
             error_msg="Access Token 不能为空",
+            allow_skip=True,
         )
 
     def _step_sheet_ids(self) -> None:
@@ -320,7 +390,12 @@ class SetupWizard:
                 ref = self._prompt(
                     f"{name}链接或 File ID", file_key, validator=_not_empty,
                     error_msg="请输入腾讯文档链接或 File ID",
+                    allow_skip=True,
                 )
+                if not ref:
+                    self.values[file_key] = ""
+                    self.values[sheet_key] = ""
+                    break
                 file_id, sheet_id = parse_tencent_sheet_reference(ref)
                 if not file_id:
                     self.console.print("  [red]无法从链接中解析 File ID，请重新输入完整链接或直接填 File ID[/red]\n")
@@ -331,6 +406,7 @@ class SetupWizard:
                 self.values[sheet_key] = self._prompt(
                     f"{name} Sheet ID", sheet_key, default=sheet_id, validator=_not_empty,
                     error_msg="Sheet ID 不能为空",
+                    allow_skip=True,
                 )
                 break
 
@@ -362,15 +438,19 @@ class SetupWizard:
 
         self.values["FEISHU_APP_ID"] = self._prompt(
             "飞书 App ID", "FEISHU_APP_ID", secret=True, validator=_not_empty,
+            allow_skip=True,
         )
         self.values["FEISHU_APP_SECRET"] = self._prompt(
             "飞书 App Secret", "FEISHU_APP_SECRET", secret=True, validator=_not_empty,
+            allow_skip=True,
         )
         self.values["FEISHU_C_FILE_TOKEN"] = self._prompt(
             "C 表 File Token", "FEISHU_C_FILE_TOKEN", validator=_not_empty,
+            allow_skip=True,
         )
         self.values["FEISHU_C_SHEET_ID"] = self._prompt(
             "C 表 Sheet ID", "FEISHU_C_SHEET_ID", validator=_not_empty,
+            allow_skip=True,
         )
 
     def _step_runtime(self) -> None:
