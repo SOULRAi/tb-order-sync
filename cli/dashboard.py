@@ -14,7 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from config.settings import Settings, get_settings
+from config.settings import APP_VERSION, Settings, get_settings
 from services.daemon_service import DaemonService
 from services.state_service import StateService
 
@@ -136,6 +136,11 @@ class DashboardApp:
             logo.append("\n")
         logo.append("Tencent Docs Order Sync Console", style="bold #e0fbfc")
 
+        hero = Group(
+            Align.center(logo),
+            Align.right(self._build_version_badge()),
+        )
+
         badges = Table.grid(expand=True)
         badges.add_column(justify="center")
         badges.add_column(justify="center")
@@ -150,7 +155,7 @@ class DashboardApp:
         hint = Text("输入编号执行任务，所有结果与失败原因会在控制台内直接返回", style="dim", justify="center")
 
         body = Group(
-            Align.center(logo),
+            hero,
             Align.center(subtitle),
             Align.center(hint),
             badges,
@@ -169,6 +174,11 @@ class DashboardApp:
         inner.add_row(Text(label, style="bold white"))
         inner.add_row(Text(value, style="bold white"))
         return Panel(inner, border_style=color, box=box.ROUNDED, padding=(0, 1))
+
+    @staticmethod
+    def _build_version_badge() -> Panel:
+        text = Text(f"v{APP_VERSION}", style="bold #0f172a", justify="center")
+        return Panel(text, border_style="#94d2bd", box=box.ROUNDED, padding=(0, 2), title="版本")
 
     @staticmethod
     def _last_run_label(last_run) -> str:

@@ -78,7 +78,7 @@ tb daemon status
 
 GitHub Release 现已提供标准完整分发包：
 - Windows: `tb-order-sync-windows-x64-<version>.zip`
-- macOS: `tb-order-sync-macos-bootstrap-<version>.zip`
+- macOS: `tb-order-sync-macos-x64-<version>.zip`
 
 ### 常用命令速查
 

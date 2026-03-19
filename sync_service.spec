@@ -20,6 +20,7 @@ a = Analysis(
     pathex=[str(root)],
     binaries=[],
     datas=[
+        (str(root / 'package.json'), '.'),
         # Bundle .env.example so first-run setup can use it as template
         (str(root / '.env.example'), '.'),
         (str(root / '快速开始.txt'), '.'),

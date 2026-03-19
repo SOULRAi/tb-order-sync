@@ -18,6 +18,7 @@ SPEC_FILE = ROOT / "sync_service.spec"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 DIST_RUNTIME_FILES = [
+    "package.json",
     ".env.example",
     "启动.bat",
     "启动.command",

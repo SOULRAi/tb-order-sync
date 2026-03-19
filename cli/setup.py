@@ -19,7 +19,8 @@ from typing import Any, Callable, Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
 try:
-    from rich.console import Console
+    from rich.align import Align
+    from rich.console import Console, Group
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
@@ -29,7 +30,7 @@ except ImportError:
 
 from dotenv import dotenv_values
 
-from config.settings import APP_HOME, PACKAGE_ROOT
+from config.settings import APP_HOME, APP_VERSION, PACKAGE_ROOT
 from utils.sheet_selector import resolve_latest_month_sheet
 
 # ── UI 文案 ────────────────────────────────────────────────────────────────
@@ -68,6 +69,11 @@ _SETUP_LOGO = (
     "[bold #86efac]   ██║   ██████╔╝   ╚██████╔╝██║  ██║██████╔╝███████╗██║  ██║[/bold #86efac]\n"
     "[bold #bbf7d0]   ╚═╝   ╚═════╝     ╚═════╝ ╚═╝  ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝[/bold #bbf7d0]"
 )
+
+
+def _build_setup_version_badge() -> Panel:
+    text = Text(f"v{APP_VERSION}", style="bold #0f172a", justify="center")
+    return Panel(text, border_style="#94d2bd", box=box.ROUNDED, padding=(0, 2), title="版本")
 
 
 # ── Validators ─────────────────────────────────────────────────────────────
@@ -114,12 +120,12 @@ def resolve_link_selection(raw: str, link_count: int) -> list[int]:
     """Resolve numeric selection for link-opening prompts.
 
     Rules:
-    - 0 / empty => skip
+    - 0 / empty / /skip => skip
     - 1 => open all
     - 2..N+1 => open one specific link
     """
-    value = raw.strip()
-    if not value:
+    value = raw.strip().lower()
+    if value in {"", "0", "/skip", "skip", "n", "no", "q", "quit"}:
         return []
     try:
         choice = int(value)
@@ -159,6 +165,10 @@ def parse_tencent_sheet_reference(raw: str) -> tuple[str, str]:
     return file_id, sheet_id
 
 
+class SetupInputTerminated(RuntimeError):
+    """Raised when the setup input stream is unexpectedly closed."""
+
+
 # ── Setup Wizard ───────────────────────────────────────────────────────────
 class SetupWizard:
     def __init__(self, console: Optional[Console] = None) -> None:
@@ -181,7 +191,10 @@ class SetupWizard:
         This is intentionally not using `Console.input`, because the Windows
         packaged runtime is more stable with the built-in `input()` behavior.
         """
-        return input(prompt).strip()
+        try:
+            return input(prompt).strip()
+        except EOFError as exc:
+            raise SetupInputTerminated("输入流已结束") from exc
 
     def _prompt(
         self,
@@ -206,7 +219,13 @@ class SetupWizard:
                 note += " [dim]输入 /skip 暂时跳过[/dim]"
 
             self.console.print(f"  {label}{hint}{note}")
-            raw = self._read_line()
+            try:
+                raw = self._read_line()
+            except SetupInputTerminated:
+                if allow_skip:
+                    self.console.print("  [yellow]输入已结束，已暂时跳过当前项[/yellow]")
+                    return ""
+                raise
 
             if allow_skip and raw.lower() == "/skip":
                 self.console.print("  [yellow]已暂时跳过，可稍后重新运行 setup 补充[/yellow]")
@@ -224,8 +243,14 @@ class SetupWizard:
     def _prompt_bool(self, label: str, default: bool = False) -> bool:
         hint = "Y/n" if default else "y/N"
         self.console.print(f"  {label} [{hint}]")
-        raw = self._read_line().lower()
+        try:
+            raw = self._read_line().lower()
+        except SetupInputTerminated:
+            self.console.print("  [yellow]输入已结束，已使用默认选项[/yellow]")
+            return default
         if not raw:
+            return default
+        if raw in {"/skip", "skip"}:
             return default
         return raw in ("y", "yes", "是")
 
@@ -237,10 +262,18 @@ class SetupWizard:
         self.console.print(f"  [dim]{title}：[/dim]")
         for idx, (label, url) in enumerate(links, start=1):
             self.console.print(f"    {idx}. {label}: [cyan]{url}[/cyan]")
-        self.console.print("  [dim]输入编号：0=暂时跳过，1=打开全部，2..N=打开单个链接[/dim]")
+        if len(links) == 1:
+            choice_help = "0=暂时跳过，1=打开全部，2=打开该链接"
+        else:
+            choice_help = f"0=暂时跳过，1=打开全部，2..{len(links) + 1}=打开单个链接"
+        self.console.print(f"  [dim]输入编号：{choice_help}，也可输入 /skip[/dim]")
 
         while True:
-            raw = self._read_line()
+            try:
+                raw = self._read_line()
+            except SetupInputTerminated:
+                self.console.print("  [yellow]输入已结束，已跳过打开链接[/yellow]")
+                return
             try:
                 indexes = resolve_link_selection(raw, len(links))
             except ValueError as exc:
@@ -272,12 +305,6 @@ class SetupWizard:
     def _open_url(url: str) -> bool:
         """Open a URL in the default browser with platform fallbacks."""
         try:
-            if webbrowser.open_new_tab(url):
-                return True
-        except webbrowser.Error:
-            pass
-
-        try:
             if sys.platform == "darwin":
                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
@@ -296,6 +323,11 @@ class SetupWizard:
             subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         except Exception:
+            pass
+
+        try:
+            return bool(webbrowser.open_new_tab(url))
+        except webbrowser.Error:
             return False
 
     def _show_tencent_guide(self) -> None:
@@ -828,8 +860,17 @@ class SetupWizard:
     def run_full(self) -> None:
         """Run the complete setup wizard."""
         try:
+            hero = Group(
+                Align.center(Text.from_markup(_SETUP_LOGO)),
+                Align.right(_build_setup_version_badge()),
+            )
             self.console.print(Panel(
-                f"{_SETUP_LOGO}\n\n[bold]{BANNER_TITLE}[/bold]\n{BANNER_SUBTITLE}",
+                Group(
+                    hero,
+                    Text(""),
+                    Text(BANNER_TITLE, style="bold", justify="center"),
+                    Text(BANNER_SUBTITLE, style="default", justify="center"),
+                ),
                 border_style="cyan",
                 padding=(1, 2),
             ))
@@ -874,6 +915,9 @@ class SetupWizard:
         except KeyboardInterrupt:
             self.console.print("\n\n[yellow]已取消配置向导[/yellow]")
             sys.exit(0)
+        except SetupInputTerminated:
+            self.console.print("\n\n[yellow]输入已结束，配置向导已安全退出[/yellow]")
+            sys.exit(1)
 
 
 # ── CLI handlers ───────────────────────────────────────────────────────────

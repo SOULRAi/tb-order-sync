@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.5] - 2026-03-20
+
+### 新增
+
+- 在 CLI 首页和配置向导的 LOGO 右下角新增版本号展示，便于直接确认当前运行版本。
+
+### 变更
+
+- 变更发布构建内容：打包产物现在会一并包含 `package.json`，保证 macOS / Windows 分发包中的 CLI 也能正确显示版本号。
+- 变更 README 的分发包说明，统一 macOS 资产命名为 `tb-order-sync-macos-x64-<version>.zip`。
+
+### 修复
+
+- 修复 `tb setup` 链接选择菜单的残留交互问题：现在支持 `0`、空回车、`/skip`、`q` 等跳过方式，并在输入流中断时安全退出，不再抛出 `EOFError` 栈追踪。
+
 ## [0.4.4] - 2026-03-20
 
 ### 修复

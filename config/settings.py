@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from enum import Enum
@@ -16,6 +17,25 @@ def _get_package_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent.parent
+
+
+def _read_app_version(package_root: Path) -> str:
+    """Read the app version from package.json when available."""
+    explicit = os.environ.get("TB_APP_VERSION", "").strip()
+    if explicit:
+        return explicit
+
+    package_json = package_root / "package.json"
+    if package_json.exists():
+        try:
+            payload = json.loads(package_json.read_text(encoding="utf-8"))
+            version = str(payload.get("version", "")).strip()
+            if version:
+                return version
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+    return "0.0.0"
 
 
 def _looks_like_global_node_package(root: Path) -> bool:
@@ -51,6 +71,7 @@ def _default_app_home() -> Path:
 PACKAGE_ROOT = _get_package_root()
 APP_HOME = _default_app_home()
 PROJECT_ROOT = PACKAGE_ROOT
+APP_VERSION = _read_app_version(PACKAGE_ROOT)
 
 
 class AppEnv(str, Enum):

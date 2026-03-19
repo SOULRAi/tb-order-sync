@@ -1,6 +1,6 @@
 {
   "name": "tb-order-sync",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Tencent Docs order sync CLI with one-command npm install, gross-profit automation, refund marking, self-check, and daemon mode",
   "bin": {
     "tb": "bin/tb.js"
