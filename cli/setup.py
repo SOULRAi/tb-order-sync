@@ -39,9 +39,8 @@ BANNER_SUBTITLE = "按照提示逐步完成配置，按 Ctrl+C 随时退出"
 
 STEP_TENCENT = "第 1 步：腾讯文档凭证"
 STEP_SHEETS = "第 2 步：表格 ID 配置"
-STEP_FEISHU = "第 3 步：飞书配置（可选）"
-STEP_RUNTIME = "第 4 步：运行参数"
-STEP_COLUMNS = "第 5 步：列映射"
+STEP_RUNTIME = "第 3 步：运行参数"
+STEP_COLUMNS = "第 4 步：列映射"
 STEP_SUMMARY = "配置总览"
 STEP_WRITE = "写入配置"
 STEP_TEST = "连接测试"
@@ -55,12 +54,6 @@ _TENCENT_FILE_RE = re.compile(r"/(?:sheet|doc|slide|mind|form|pdf)/([^/?#]+)")
 
 TENCENT_DOCS_GUIDE_URL = "https://docs.qq.com/open/document/app/"
 TENCENT_DEVELOPER_CONSOLE_URL = "https://docs.qq.com/open/developers/"
-FEISHU_DEVELOPER_CONSOLE_URL = "https://open.feishu.cn/app"
-FEISHU_TOKEN_DOC_URL = (
-    "https://open.feishu.cn/document/server-docs/"
-    "authentication-management/access-token/tenant_access_token_internal"
-)
-FEISHU_TOKEN_TUTORIAL_URL = "https://www.feishu.cn/content/000214591773"
 _SETUP_LOGO = (
     "[bold #8ecae6]████████╗██████╗     ██████╗ ██████╗ ██████╗ ███████╗██████╗[/bold #8ecae6]\n"
     "[bold #38bdf8]╚══██╔══╝██╔══██╗   ██╔═══██╗██╔══██╗██╔══██╗██╔════╝██╔══██╗[/bold #38bdf8]\n"
@@ -120,24 +113,18 @@ def resolve_link_selection(raw: str, link_count: int) -> list[int]:
     """Resolve numeric selection for link-opening prompts.
 
     Rules:
-    - 0 / empty / /skip => skip
-    - 1 => open all
-    - 2..N+1 => open one specific link
+    - empty => skip
+    - 1..N => open one specific link
     """
-    value = raw.strip().lower()
-    if value in {"", "0", "/skip", "skip", "n", "no", "q", "quit"}:
+    value = raw.strip()
+    if not value:
         return []
     try:
         choice = int(value)
     except ValueError as exc:
         raise ValueError("请输入数字编号") from exc
 
-    if choice == 0:
-        return []
-    if choice == 1:
-        return list(range(link_count))
-
-    index = choice - 2
+    index = choice - 1
     if 0 <= index < link_count:
         return [index]
     raise ValueError("编号超出范围")
@@ -254,6 +241,90 @@ class SetupWizard:
             return default
         return raw in ("y", "yes", "是")
 
+    def _prompt_choice(
+        self,
+        label: str,
+        key: str,
+        options: Sequence[tuple[str, str, str]],
+        default_value: str,
+    ) -> str:
+        """Prompt the user to choose one option via a numbered list."""
+        existing = (self._existing.get(key, "") or "").strip()
+        effective_default = existing or default_value
+        option_map = {str(idx): value for idx, (value, _, _) in enumerate(options, start=1)}
+        default_choice = next(
+            (str(idx) for idx, (value, _, _) in enumerate(options, start=1) if value == effective_default),
+            "1",
+        )
+
+        self.console.print(f"  {label}")
+        for idx, (_, title, desc) in enumerate(options, start=1):
+            suffix = " [dim](默认)[/dim]" if str(idx) == default_choice else ""
+            self.console.print(f"    {idx}. {title}{suffix}")
+            self.console.print(f"       [dim]{desc}[/dim]")
+
+        while True:
+            self.console.print(f"  [dim]请输入编号，直接回车使用默认选项（{default_choice}）[/dim]")
+            raw = self._read_line()
+            if not raw:
+                return option_map[default_choice]
+            if raw in option_map:
+                return option_map[raw]
+            self.console.print("  [red]请输入有效编号[/red]")
+
+    def _prompt_sheet_link(self, name: str, file_key: str, sheet_key: str) -> None:
+        """Prompt for a full Tencent Docs sheet link and parse both file/sheet ids."""
+        existing_file = (self._existing.get(file_key, "") or "").strip()
+        existing_sheet = (self._existing.get(sheet_key, "") or "").strip()
+
+        self.console.print(f"  [bold]{name}[/bold]")
+        if existing_file and existing_sheet:
+            self.console.print("  [dim]直接粘贴完整腾讯文档链接；直接回车则保持当前配置[/dim]")
+        else:
+            self.console.print("  [dim]请直接粘贴完整腾讯文档在线表格链接[/dim]")
+
+        while True:
+            hint = " [dim]（可直接粘贴）[/dim]"
+            self.console.print(f"  {name}链接{hint}")
+            raw = self._read_line()
+
+            if not raw:
+                if existing_file and existing_sheet:
+                    self.values[file_key] = existing_file
+                    self.values[sheet_key] = existing_sheet
+                    self.console.print(f"  [green]已保留当前配置：{existing_sheet}[/green]")
+                    return
+                self.console.print("  [red]请直接粘贴完整腾讯文档链接[/red]")
+                continue
+
+            file_id, sheet_id = parse_tencent_sheet_reference(raw)
+            if not file_id or not sheet_id:
+                self.console.print("  [red]无法自动解析，请直接粘贴完整腾讯文档在线表格链接[/red]\n")
+                continue
+
+            self.values[file_key] = file_id
+            self.values[sheet_key] = sheet_id
+            self.console.print(f"  [green]已自动解析 Sheet ID: {sheet_id}[/green]")
+            return
+
+    def _apply_implicit_defaults(self) -> None:
+        """Preserve hidden or omitted config values when setup skips them."""
+        implicit_defaults = {
+            "TENCENT_CLIENT_SECRET": "",
+            "FEISHU_APP_ID": "",
+            "FEISHU_APP_SECRET": "",
+            "FEISHU_C_FILE_TOKEN": "",
+            "FEISHU_C_SHEET_ID": "",
+            "APP_ENV": "dev",
+            "LOG_LEVEL": "INFO",
+            "C_SYNC_MODE": "incremental",
+            "REFUND_STATUS_TEXT": "已退款",
+            "DATA_ERROR_TEXT": "数据异常",
+        }
+        for key, default in implicit_defaults.items():
+            if key not in self.values:
+                self.values[key] = (self._existing.get(key, "") or default).strip() or default
+
     def _offer_open_links(self, title: str, links: Sequence[tuple[str, str]]) -> None:
         """Optionally open one or more documentation links in the default browser."""
         if not links:
@@ -263,10 +334,10 @@ class SetupWizard:
         for idx, (label, url) in enumerate(links, start=1):
             self.console.print(f"    {idx}. {label}: [cyan]{url}[/cyan]")
         if len(links) == 1:
-            choice_help = "0=暂时跳过，1=打开全部，2=打开该链接"
+            choice_help = "输入 1 打开链接，直接回车跳过"
         else:
-            choice_help = f"0=暂时跳过，1=打开全部，2..{len(links) + 1}=打开单个链接"
-        self.console.print(f"  [dim]输入编号：{choice_help}，也可输入 /skip[/dim]")
+            choice_help = f"输入 1 到 {len(links)} 打开对应链接，直接回车跳过"
+        self.console.print(f"  [dim]{choice_help}[/dim]")
 
         while True:
             try:
@@ -333,15 +404,13 @@ class SetupWizard:
     def _show_tencent_guide(self) -> None:
         """Display beginner guidance for Tencent Docs Open API setup."""
         body = (
-            "1. 打开腾讯文档开放平台开发文档，先确认你要接的是 Open API。\n"
+            "1. 先打开腾讯文档开放平台开发文档，确认你接入的是 Open API。\n"
             f"   文档入口: {TENCENT_DOCS_GUIDE_URL}\n"
-            "2. 打开开发者平台，创建应用并进入应用详情页。\n"
+            "2. 再打开开发者平台，创建应用并进入应用详情页。\n"
             f"   开发者平台: {TENCENT_DEVELOPER_CONSOLE_URL}\n"
-            "3. 在应用详情中获取 Client ID / Client Secret。\n"
-            "4. 按官方 OAuth2 授权流程获取 Access Token。\n"
-            "5. 本项目当前 MVP 需要你先手工提供有效 Access Token；"
-            "自动刷新 token 还没接入。\n"
-            "6. Open ID 目前是可选项，部分接口或企业场景可能会用到。"
+            "3. 在应用详情页里获取 Client ID。\n"
+            "4. 完成授权后，拿到 Open ID 和 Access Token。\n"
+            "5. 当前向导只需要你填写 Client ID、Open ID、Access Token 这三项即可。"
         )
         self.console.print(Panel(
             body,
@@ -358,12 +427,9 @@ class SetupWizard:
         """Display how to locate file id and sheet id."""
         body = (
             "1. 先在浏览器打开目标腾讯文档 A 表 / B 表。\n"
-            "2. File ID / Sheet ID 的展示形式可能因腾讯文档产品类型不同而不同。\n"
-            "3. 第一版请以你在官方链接、页面参数或开发者文档中实际看到的 ID 为准。\n"
-            "4. 如果你不确定，请先在腾讯文档开发文档里核对在线表格 API 的文件和 sheet 标识规则。\n"
-            f"   文档入口: {TENCENT_DOCS_GUIDE_URL}\n"
-            "5. 本项目代码里已把腾讯文档 endpoint 标为 TODO / NEED_VERIFY，"
-            "如果你的表格类型不是标准在线表格，后续可能需要再补对接。"
+            "2. 复制浏览器地址栏里的完整表格链接。\n"
+            "3. 直接把完整链接粘贴到下面，系统会自动解析 File ID 和 Sheet ID。\n"
+            "4. 如果没有识别成功，通常是因为链接不完整，或者当前页面不是在线表格页。"
         )
         self.console.print(Panel(
             body,
@@ -373,32 +439,6 @@ class SetupWizard:
         ))
         self._offer_open_links("表格 ID 参考链接", [
             ("腾讯文档开发文档", TENCENT_DOCS_GUIDE_URL),
-        ])
-
-    def _show_feishu_guide(self) -> None:
-        """Display beginner guidance for Feishu Open Platform setup."""
-        body = (
-            "1. 打开飞书开放平台，创建自建应用。\n"
-            f"   开发者平台: {FEISHU_DEVELOPER_CONSOLE_URL}\n"
-            "2. 在应用凭证页获取 App ID 和 App Secret。\n"
-            "3. 按官方服务端认证文档获取 tenant_access_token。\n"
-            f"   官方文档: {FEISHU_TOKEN_DOC_URL}\n"
-            "4. 如果你是第一次接飞书 API，可以先看一遍官方教程示例，"
-            "它演示了 token 的获取和后续 API 调用链路。\n"
-            f"   教程文章: {FEISHU_TOKEN_TUTORIAL_URL}\n"
-            "5. C 表的 File Token / Sheet ID 请以你实际接入的飞书文档或表格链接规则为准。\n"
-            "6. 当前项目里飞书 connector 还是 skeleton，先录入配置，后续第二阶段接通。"
-        )
-        self.console.print(Panel(
-            body,
-            title="[bold]飞书 API 获取指引[/bold]",
-            border_style="green",
-            expand=False,
-        ))
-        self._offer_open_links("飞书相关链接", [
-            ("飞书开发者平台", FEISHU_DEVELOPER_CONSOLE_URL),
-            ("tenant_access_token 官方文档", FEISHU_TOKEN_DOC_URL),
-            ("动态 Token 教程", FEISHU_TOKEN_TUTORIAL_URL),
         ])
 
     # ── Steps ──────────────────────────────────────────────────────────────
@@ -412,120 +452,59 @@ class SetupWizard:
         self.values["TENCENT_CLIENT_ID"] = self._prompt(
             "Client ID", "TENCENT_CLIENT_ID", secret=True, validator=_not_empty,
             error_msg="Client ID 不能为空",
-            allow_skip=True,
-        )
-        self.values["TENCENT_CLIENT_SECRET"] = self._prompt(
-            "Client Secret（当前运行可留空）", "TENCENT_CLIENT_SECRET", secret=True,
-            allow_skip=True,
         )
         self.values["TENCENT_OPEN_ID"] = self._prompt(
-            "Open ID（可选，部分接口需要）", "TENCENT_OPEN_ID", secret=True,
-            allow_skip=True,
+            "Open ID", "TENCENT_OPEN_ID", secret=True, validator=_not_empty,
+            error_msg="Open ID 不能为空",
         )
         self.values["TENCENT_ACCESS_TOKEN"] = self._prompt(
             "Access Token", "TENCENT_ACCESS_TOKEN", secret=True, validator=_not_empty,
             error_msg="Access Token 不能为空",
-            allow_skip=True,
         )
 
     def _step_sheet_ids(self) -> None:
         self.console.print(f"\n[bold cyan]📊 {STEP_SHEETS}[/bold cyan]")
-        self.console.print("  可直接粘贴腾讯文档完整链接，系统会自动拆出 File ID / Sheet ID\n")
+        self.console.print("  直接粘贴腾讯文档完整链接，系统会自动解析表格信息\n")
         self._show_sheet_id_guide()
         self.console.print("")
 
-        def prompt_sheet_target(name: str, file_key: str, sheet_key: str) -> None:
-            while True:
-                self.console.print(f"  [bold]{name}[/bold]")
-                ref = self._prompt(
-                    f"{name}链接或 File ID", file_key, validator=_not_empty,
-                    error_msg="请输入腾讯文档链接或 File ID",
-                    allow_skip=True,
-                )
-                if not ref:
-                    self.values[file_key] = ""
-                    self.values[sheet_key] = ""
-                    break
-                file_id, sheet_id = parse_tencent_sheet_reference(ref)
-                if not file_id:
-                    self.console.print("  [red]无法从链接中解析 File ID，请重新输入完整链接或直接填 File ID[/red]\n")
-                    continue
-                self.values[file_key] = file_id
-                if sheet_id:
-                    self.console.print(f"  [green]已自动解析 {name} Sheet ID: {sheet_id}[/green]")
-                self.values[sheet_key] = self._prompt(
-                    f"{name} Sheet ID", sheet_key, default=sheet_id, validator=_not_empty,
-                    error_msg="Sheet ID 不能为空",
-                    allow_skip=True,
-                )
-                break
-
-        prompt_sheet_target("A 表（订单表）", "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID")
+        self._prompt_sheet_link("A表（订单表/毛利率表）", "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID")
         self.values["TENCENT_A_SHEET_NAME_KEYWORD"] = self._prompt(
-            "A 表按名称自动选最新月份（可选关键字，如 毛利率）",
+            "A表表格关键字匹配（可选，例如 毛利率）",
             "TENCENT_A_SHEET_NAME_KEYWORD",
             default="",
         )
         self.console.print("")
-        prompt_sheet_target("B 表（退款表）", "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID")
+        self._prompt_sheet_link("B表（客户退款表）", "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID")
         self.values["TENCENT_B_SHEET_NAME_KEYWORD"] = self._prompt(
-            "B 表按名称自动选最新月份（可选关键字，如 客户退款）",
+            "B表表格关键字匹配（可选，例如 客户退款）",
             "TENCENT_B_SHEET_NAME_KEYWORD",
             default="",
-        )
-
-    def _step_feishu_creds(self) -> None:
-        self.console.print(f"\n[bold cyan]🐦 {STEP_FEISHU}[/bold cyan]")
-        self._show_feishu_guide()
-        self.console.print("")
-        if not self._prompt_bool("是否现在配置飞书（C 表）？", default=False):
-            self.values.setdefault("FEISHU_APP_ID", "")
-            self.values.setdefault("FEISHU_APP_SECRET", "")
-            self.values.setdefault("FEISHU_C_FILE_TOKEN", "")
-            self.values.setdefault("FEISHU_C_SHEET_ID", "")
-            self.console.print("  [dim]已跳过飞书配置，后续可重新运行 setup 补充[/dim]")
-            return
-
-        self.values["FEISHU_APP_ID"] = self._prompt(
-            "飞书 App ID", "FEISHU_APP_ID", secret=True, validator=_not_empty,
-            allow_skip=True,
-        )
-        self.values["FEISHU_APP_SECRET"] = self._prompt(
-            "飞书 App Secret", "FEISHU_APP_SECRET", secret=True, validator=_not_empty,
-            allow_skip=True,
-        )
-        self.values["FEISHU_C_FILE_TOKEN"] = self._prompt(
-            "C 表 File Token", "FEISHU_C_FILE_TOKEN", validator=_not_empty,
-            allow_skip=True,
-        )
-        self.values["FEISHU_C_SHEET_ID"] = self._prompt(
-            "C 表 Sheet ID", "FEISHU_C_SHEET_ID", validator=_not_empty,
-            allow_skip=True,
         )
 
     def _step_runtime(self) -> None:
         self.console.print(f"\n[bold cyan]⚙️  {STEP_RUNTIME}[/bold cyan]\n")
 
-        self.values["APP_ENV"] = self._prompt(
-            "运行环境 (dev / staging / prod)", "APP_ENV", default="dev",
-        )
-        self.values["LOG_LEVEL"] = self._prompt(
-            "日志级别 (DEBUG / INFO / WARNING / ERROR)", "LOG_LEVEL", default="INFO",
-        )
         self.values["STATE_DIR"] = self._prompt(
             "状态文件目录", "STATE_DIR", default="state",
         )
-        self.values["GROSS_PROFIT_MODE"] = self._prompt(
-            "毛利计算模式 (incremental / full)", "GROSS_PROFIT_MODE", default="incremental",
-            validator=_is_sync_mode, error_msg="请输入 incremental 或 full",
+        self.values["GROSS_PROFIT_MODE"] = self._prompt_choice(
+            "毛利计算模式",
+            "GROSS_PROFIT_MODE",
+            [
+                ("incremental", "增量模式", "只处理新增行或发生变化的行"),
+                ("full", "全量模式", "重新计算整张表的毛利"),
+            ],
+            default_value="incremental",
         )
-        self.values["REFUND_MATCH_MODE"] = self._prompt(
-            "退款匹配模式 (incremental / full)", "REFUND_MATCH_MODE", default="incremental",
-            validator=_is_sync_mode, error_msg="请输入 incremental 或 full",
-        )
-        self.values["C_SYNC_MODE"] = self._prompt(
-            "C 表同步模式 (incremental / full)", "C_SYNC_MODE", default="incremental",
-            validator=_is_sync_mode, error_msg="请输入 incremental 或 full",
+        self.values["REFUND_MATCH_MODE"] = self._prompt_choice(
+            "退款匹配模式",
+            "REFUND_MATCH_MODE",
+            [
+                ("incremental", "增量模式", "只处理新增退款单和发生变化的订单"),
+                ("full", "全量模式", "全表重扫并重建退款状态"),
+            ],
+            default_value="incremental",
         )
         self.values["TASK_INTERVAL_MINUTES"] = self._prompt(
             "定时任务间隔（分钟）", "TASK_INTERVAL_MINUTES", default="10",
@@ -608,8 +587,7 @@ class SetupWizard:
 
         sections = [
             ("腾讯文档凭证", [
-                "TENCENT_CLIENT_ID", "TENCENT_CLIENT_SECRET",
-                "TENCENT_OPEN_ID", "TENCENT_ACCESS_TOKEN",
+                "TENCENT_CLIENT_ID", "TENCENT_OPEN_ID", "TENCENT_ACCESS_TOKEN",
             ]),
             ("表格 ID", [
                 "TENCENT_A_FILE_ID", "TENCENT_A_SHEET_ID",
@@ -617,13 +595,8 @@ class SetupWizard:
                 "TENCENT_B_FILE_ID", "TENCENT_B_SHEET_ID",
                 "TENCENT_B_SHEET_NAME_KEYWORD",
             ]),
-            ("飞书配置", [
-                "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-                "FEISHU_C_FILE_TOKEN", "FEISHU_C_SHEET_ID",
-            ]),
             ("运行参数", [
-                "APP_ENV", "LOG_LEVEL", "STATE_DIR",
-                "GROSS_PROFIT_MODE", "REFUND_MATCH_MODE", "C_SYNC_MODE",
+                "STATE_DIR", "GROSS_PROFIT_MODE", "REFUND_MATCH_MODE",
                 "TASK_INTERVAL_MINUTES", "STARTUP_JITTER_SECONDS",
                 "WRITE_BATCH_SIZE", "RETRY_TIMES",
                 "DRY_RUN", "ENABLE_STYLE_UPDATE",
@@ -880,9 +853,9 @@ class SetupWizard:
 
             self._step_tencent_creds()
             self._step_sheet_ids()
-            self._step_feishu_creds()
             self._step_runtime()
             self._step_column_mapping()
+            self._apply_implicit_defaults()
 
             # Ensure business text defaults
             self.values.setdefault("REFUND_STATUS_TEXT", "已退款")

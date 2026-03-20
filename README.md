@@ -127,13 +127,12 @@ tb daemon autostart-disable
 - 开发者平台: [腾讯文档开放生态](https://docs.qq.com/open/developers/)
 - 建议流程:
   1. 先进入开发者平台创建应用
-  2. 在应用详情页获取 `Client ID` 和 `Client Secret`
-  3. 按官方 OAuth2 流程获取 `Access Token`
+  2. 在应用详情页获取 `Client ID`
+  3. 完成授权后获取 `Open ID` 和 `Access Token`
   4. 再回到本项目执行 `tb setup`
 - 当前说明:
   - 本项目 MVP 目前依赖你手工提供有效 `Access Token`
   - 当前运行链路要求 `Client ID + Open ID + Access Token`
-  - `Client Secret` 目前保留为可选项，后续接自动刷新 token 时再使用
   - 在线表格 v3 读写链路已经完成真实联调验证
 
 ### 飞书 API
@@ -351,7 +350,8 @@ B_COL_ORDER_NO=A
 ```
 
 补充说明：
-- `tb setup` 支持直接粘贴腾讯文档完整链接，自动拆出 `File ID / Sheet ID`
+- `tb setup` 会直接要求你粘贴腾讯文档完整链接，并自动解析 `File ID / Sheet ID`
+- `tb setup` 当前只保留腾讯文档最小必填项，不再展示飞书和其他暂时不用的高级配置
 - 如果填写 `TENCENT_A_SHEET_NAME_KEYWORD` / `TENCENT_B_SHEET_NAME_KEYWORD`，系统会在对应文件里自动选取标题中匹配关键字的“最新月份”工作表
 - `tb check` 会做启动自检，不只是看 `.env` 是否存在
 - 当前退款高亮效果是“整行红色文字”，不是背景填充
@@ -362,7 +362,7 @@ B_COL_ORDER_NO=A
 ## 🧪 测试
 
 ```bash
-# 运行全部测试（49 tests）
+# 运行全部测试
 pytest tests/ -v
 
 # 单独运行

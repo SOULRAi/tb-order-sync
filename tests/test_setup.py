@@ -29,21 +29,16 @@ def test_parse_tencent_sheet_reference_invalid_url():
     assert sheet_id == ""
 
 
-def test_resolve_link_selection_open_all():
-    assert resolve_link_selection("1", 3) == [0, 1, 2]
-
-
 def test_resolve_link_selection_skip():
-    assert resolve_link_selection("0", 3) == []
+    assert resolve_link_selection("", 3) == []
 
 
-@pytest.mark.parametrize("value", ["/skip", "skip", "n", "q", ""])
-def test_resolve_link_selection_accepts_skip_aliases(value: str):
-    assert resolve_link_selection(value, 3) == []
+def test_resolve_link_selection_open_first_item():
+    assert resolve_link_selection("1", 3) == [0]
 
 
 def test_resolve_link_selection_open_single_item():
-    assert resolve_link_selection("3", 3) == [1]
+    assert resolve_link_selection("2", 3) == [1]
 
 
 def test_resolve_link_selection_rejects_invalid_number():
@@ -51,9 +46,9 @@ def test_resolve_link_selection_rejects_invalid_number():
         resolve_link_selection("9", 2)
 
 
-def test_offer_open_links_supports_skip_alias(monkeypatch):
+def test_offer_open_links_supports_enter_skip(monkeypatch):
     wizard = SetupWizard(console=Console(record=True))
-    monkeypatch.setattr(wizard, "_read_line", lambda prompt="  > ": "/skip")
+    monkeypatch.setattr(wizard, "_read_line", lambda prompt="  > ": "")
     monkeypatch.setattr(wizard, "_open_url", lambda url: pytest.fail("should not open url"))
     wizard._offer_open_links("测试链接", [("文档", "https://example.com")])
 
